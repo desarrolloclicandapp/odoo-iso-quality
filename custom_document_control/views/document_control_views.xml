@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_document_folder_form" model="ir.ui.view">
+        <field name="name">document.folder.form</field>
+        <field name="model">document.folder</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="parent_id"/>
+                    </group>
+                    <notebook>
+                        <page string="Subcarpetas">
+                            <field name="child_ids"><list><field name="name"/></list></field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="view_document_folder_tree" model="ir.ui.view">
+        <field name="name">document.folder.list</field>
+        <field name="model">document.folder</field>
+        <field name="arch" type="xml">
+            <list><field name="complete_name" string="Ruta"/></list>
+        </field>
+    </record>
+    <record id="action_document_folder" model="ir.actions.act_window">
+        <field name="name">Estructura de Carpetas</field>
+        <field name="res_model">document.folder</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <record id="view_document_control_tree" model="ir.ui.view">
+        <field name="name">document.control.list</field>
+        <field name="model">document.control</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="code"/>
+                <field name="name"/>
+                <field name="version"/>
+                <field name="folder_id"/>
+                <field name="state" widget="badge" 
+                       decoration-info="state == 'draft'"
+                       decoration-primary="state == 'upload'"
+                       decoration-warning="state in ('review','validate')" 
+                       decoration-success="state == 'approved'"
+                       decoration-muted="state == 'obsolete'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_document_control_form" model="ir.ui.view">
+        <field name="name">document.control.form</field>
+        <field name="model">document.control</field>
+        <field name="arch" type="xml">
+            <form string="Documento Controlado">
+                <header>
+                    <button name="action_start_flow" string="▶ Iniciar" type="object" class="oe_highlight" invisible="state != 'draft'"/>
+                    <button name="action_submit_review" string="Enviar a Revisión" type="object" class="oe_highlight" invisible="state != 'upload'"/>
+                    <button name="action_review_pass" string="✅ Visto Bueno" type="object" class="oe_highlight" invisible="state != 'review'"/>
+                    <button name="action_approve" string="🏆 Aprobar Final" type="object" class="oe_highlight" invisible="state != 'validate'"/>
+                    <button name="action_reject" string="❌ Devolver" type="object" class="btn-danger" invisible="state not in ('review', 'validate')"/>
+
+                    <button name="action_create_minor_rev" string="⚡ Revisión Menor" type="object" class="btn-secondary"
+                            invisible="state != 'approved' or active_revision_id" confirm="Crear borrador v+0.1. ¿Seguir?"/>
+                    <button name="action_create_major_rev" string="🔄 Versión Mayor" type="object" class="btn-primary"
+                            invisible="state != 'approved' or active_revision_id" confirm="Crear borrador v+1.0. ¿Seguir?"/>
+
+                    <button name="%(custom_document_control.action_report_document_certificate)d" 
+                            string="🖨️ Imprimir Certificado" 
+                            type="action" 
+                            class="oe_highlight"
+                            invisible="state != 'approved'"/>
+
+                    <field name="state" widget="statusbar" statusbar_visible="draft,upload,review,validate,approved"/>
+                </header>
+
+                <div class="alert alert-warning" role="alert" invisible="not active_revision_id">
+                    <strong>¡Atención!</strong> Se está trabajando en una nueva versión. 
+                    <field name="active_revision_id" widget="url" readonly="1" string="Ver Borrador en Curso"/>
+                </div>
+
+                <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="code"/> 
+                            <span class="o_tag o_tag_color_10">v<field name="version"/></span>
+                        </h1>
+                        <h2><field name="name" readonly="state != 'draft'"/></h2>
+                    </div>
+
+                    <group>
+                        <group string="Ubicación">
+                            <field name="folder_id" options="{'no_create': True}" readonly="state != 'draft'" groups="!custom_document_control.group_document_manager"/>
+                            <field name="folder_id" options="{'no_create': True}" groups="custom_document_control.group_document_manager"/>
+                            <field name="area" readonly="state != 'draft'"/>
+                            <field name="document_type" readonly="state != 'draft'"/>
+                        </group>
+                        <group string="Trazabilidad">
+                            <field name="owner_id" readonly="state != 'draft'"/>
+                            <field name="issue_date" readonly="1"/>
+                            <field name="source_document_id" invisible="not source_document_id"/>
+                            <field name="active_revision_id" invisible="1"/>
+                            <field name="revision_type" invisible="not source_document_id" readonly="1"/>
+                            <field name="is_owner" invisible="1"/>
+                        </group>
+                    </group>
+
+                    <notebook invisible="state == 'draft'">
+                        <page string="Archivos">
+                            <group>
+                                <group string="Fuente">
+                                    <field name="editable_filename" invisible="1"/>
+                                    <field name="editable_file" filename="editable_filename" widget="binary" readonly="state != 'upload'"/> 
+                                </group>
+                                <group string="PDF Oficial">
+                                    <field name="pdf_filename" invisible="1"/>
+                                    <field name="pdf_file" filename="pdf_filename" widget="binary" readonly="state != 'upload'"/>
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Equipo y Firmas">
+                            <group>
+                                <field name="reviewer_ids" widget="many2many_tags" readonly="state != 'upload'"/>
+                                <field name="approver_ids" widget="many2many_tags" readonly="state != 'upload'"/>
+                            </group>
+                            <group string="Historial de Firmas" invisible="state != 'approved'">
+                                <field name="reviewed_by_id"/>
+                                <field name="review_date"/>
+                                <field name="approved_by_id"/>
+                                <field name="approval_date"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_document_control_search" model="ir.ui.view">
+        <field name="name">document.control.search</field>
+        <field name="model">document.control</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name" string="Documento"/>
+                <field name="code"/>
+                <filter string="Mis Documentos" name="my_docs" domain="[('owner_id', '=', uid)]"/>
+                <filter string="Solo Vigentes" name="active_docs" domain="[('state', '=', 'approved')]"/>
+                <searchpanel>
+                    <field name="folder_id" icon="fa-folder" enable_counters="1"/>
+                    <field name="state" icon="fa-filter" select="multi" enable_counters="1"/>
+                </searchpanel>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_document_control" model="ir.actions.act_window">
+        <field name="name">Gestión de Calidad</field>
+        <field name="res_model">document.control</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <record id="view_document_repository_list" model="ir.ui.view">
+        <field name="name">document.repository.list</field>
+        <field name="model">document.control</field>
+        <field name="arch" type="xml">
+            <list create="0" delete="0" edit="0" decoration-muted="state == 'obsolete'">
+                <field name="code" optional="show"/>
+                <field name="name"/>
+                <field name="version"/>
+                <field name="issue_date"/>
+                
+                <field name="pdf_filename" column_invisible="True"/> 
+                <field name="pdf_file" filename="pdf_filename" widget="binary" string="📄 Documento"/>
+                
+                <button name="%(custom_document_control.action_report_document_certificate)d" 
+                        type="action" 
+                        string="Certificado"
+                        icon="fa-print"
+                        title="Imprimir Certificado de Aprobación"/>
+
+                <field name="folder_id" optional="hide"/>
+                <field name="state" widget="badge" decoration-success="state == 'approved'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="action_document_repository" model="ir.actions.act_window">
+        <field name="name">Repositorio Maestro</field>
+        <field name="res_model">document.control</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('state', '=', 'approved')]</field>
+        <field name="view_id" ref="view_document_repository_list"/>
+        <field name="context">{}</field>
+    </record>
+
+</odoo>

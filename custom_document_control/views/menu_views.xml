@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_document_control_root" 
+              name="Gestión Calidad" 
+              web_icon="custom_document_control,static/description/icon.png" 
+              sequence="10"/>
+
+    <menuitem id="menu_document_control_main" 
+              name="Gestión de Documentos" 
+              parent="menu_document_control_root" 
+              sequence="1"/>
+
+    <menuitem id="menu_document_control_action" 
+              name="Mis Trámites" 
+              parent="menu_document_control_main" 
+              action="action_document_control" 
+              sequence="10"/>
+
+    <menuitem id="menu_document_repository_main" 
+              name="Biblioteca Oficial" 
+              parent="menu_document_control_root" 
+              sequence="2"/>
+
+    <menuitem id="menu_document_repository_view" 
+              name="Repositorio Maestro" 
+              parent="menu_document_repository_main" 
+              action="action_document_repository" 
+              sequence="10"/>
+
+    <menuitem id="menu_configuration_root" 
+              name="Configuración" 
+              parent="menu_document_control_root" 
+              sequence="100"
+              groups="custom_document_control.group_document_manager"/> 
+
+    <menuitem id="menu_document_folders" 
+              name="Estructura de Carpetas" 
+              parent="menu_configuration_root" 
+              action="action_document_folder" 
+              sequence="10"/>
+</odoo>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="module_category_document_control" model="ir.module.category">
+        <field name="name">Control de Documentos</field>
+        <field name="description">Niveles de acceso para gestión documental</field>
+        <field name="sequence">10</field>
+    </record>
+
+    <record id="group_document_user" model="res.groups">
+        <field name="name">Usuario</field>
+        </record>
+
+    <record id="group_document_manager" model="res.groups">
+        <field name="name">Administrador</field>
+        <field name="implied_ids" eval="[(4, ref('group_document_user'))]"/>
+
+        <field name="user_ids" eval="[(4, ref('base.user_root')), (4, ref('base.user_admin'))]"/>
+    </record>
+</odoo>
