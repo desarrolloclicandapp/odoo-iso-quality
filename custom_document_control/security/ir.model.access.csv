@@ -1,5 +1,8 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
-access_document_control_user,document.control.user,model_document_control,group_document_user,1,1,1,0
-access_document_control_manager,document.control.manager,model_document_control,group_document_manager,1,1,1,1
-access_document_folder_user,document.folder.user,model_document_folder,group_document_user,1,0,0,0
-access_document_folder_manager,document.folder.manager,model_document_folder,group_document_manager,1,1,1,1
+access_doc_folder,access_doc_folder,model_document_folder,base.group_user,1,1,1,1
+access_doc_control,access_doc_control,model_document_control,base.group_user,1,1,1,1
+access_doc_area,access_doc_area,model_document_area,base.group_user,1,1,1,1
+access_doc_cat,access_doc_cat,model_document_category,base.group_user,1,1,1,1
+access_doc_type,access_doc_type,model_document_type,base.group_user,1,1,1,1
+access_doc_tag,access_doc_tag,model_document_tag,base.group_user,1,1,1,1
+access_doc_reject_wizard,access_doc_reject_wizard,model_document_reject_wizard,base.group_user,1,1,1,1

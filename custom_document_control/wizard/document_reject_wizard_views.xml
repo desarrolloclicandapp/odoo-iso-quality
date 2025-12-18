@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_document_reject_wizard_form" model="ir.ui.view">
+        <field name="name">document.reject.wizard.form</field>
+        <field name="model">document.reject.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Rechazar Documento">
+                <group>
+                    <div class="alert alert-warning" role="alert">
+                        Estás a punto de devolver este documento al estado de <b>Carga</b>.
+                        Por favor, indica el motivo para que el propietario sepa qué corregir.
+                    </div>
+                </group>
+                <group>
+                    <field name="reject_reason" placeholder="Ej: El logotipo está pixelado, falta la firma en la pág 2..." nolabel="0"/>
+                    <field name="document_id" invisible="1"/>
+                </group>
+                <footer>
+                    <button name="action_confirm_reject" string="Rechazar Definitivamente" type="object" class="btn-danger"/>
+                    <button string="Cancelar" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_document_reject_wizard" model="ir.actions.act_window">
+        <field name="name">Rechazar Documento</field>
+        <field name="res_model">document.reject.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field> </record>
+</odoo>

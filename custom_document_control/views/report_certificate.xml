@@ -1,101 +1,121 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-
     <record id="action_report_document_certificate" model="ir.actions.report">
         <field name="name">Certificado de Aprobación</field>
         <field name="model">document.control</field>
         <field name="report_type">qweb-pdf</field>
-        <field name="report_name">custom_document_control.report_certificate_template</field>
-        <field name="report_file">custom_document_control.report_certificate_template</field>
-        <field name="print_report_name">'Certificado - %s - v%s' % (object.code, object.version)</field>
+        <field name="report_name">custom_document_control.report_document_certificate_template</field>
+        <field name="report_file">custom_document_control.report_document_certificate_template</field>
         <field name="binding_model_id" ref="model_document_control"/>
         <field name="binding_type">report</field>
     </record>
 
-    <template id="report_certificate_template">
+    <template id="report_document_certificate_template">
         <t t-call="web.html_container">
-            <t t-foreach="docs" t-as="doc">
+            <t t-foreach="docs" t-as="o">
                 <t t-call="web.external_layout">
-                    <div class="page" style="font-family: 'Helvetica', sans-serif;">
+                    <div class="page">
                         
-                        <div class="text-center mt-4 mb-5">
-                            <h1 style="color: #2c3e50; font-weight: bold;">CERTIFICADO DE APROBACIÓN</h1>
-                            <p style="color: #7f8c8d; font-size: 14px;">Sistema de Gestión de Calidad</p>
-                            <div style="border-bottom: 2px solid #2c3e50; width: 200px; margin: 20px auto;"></div>
+                        <div class="text-center mb-4">
+                            <h2>Certificado de Control Documental</h2>
+                            <h4 class="text-muted"><span t-field="o.code"/> - v<span t-field="o.version"/></h4>
                         </div>
 
-                        <div class="row mt-4 p-4" style="background-color: #f8f9fa; border-radius: 10px;">
+                        <hr/>
+
+                        <div class="row mt-4">
                             <div class="col-6">
-                                <p><strong>Código:</strong> <span t-field="doc.code"/></p>
-                                <p><strong>Título:</strong> <span t-field="doc.name"/></p>
-                                <p><strong>Área:</strong> <span t-field="doc.area"/></p>
+                                <strong>Título del Documento:</strong><br/>
+                                <span t-field="o.name"/>
                             </div>
-                            <div class="col-6 text-end">
-                                <p><strong>Versión Aprobada:</strong> <span style="font-size: 18px; color: #27ae60; font-weight: bold;" t-field="doc.version"/></p>
-                                <p><strong>Fecha Emisión:</strong> <span t-field="doc.issue_date"/></p>
-                                <p><strong>Tipo:</strong> <span t-field="doc.document_type"/></p>
+                            <div class="col-6">
+                                <strong>Área Responsable:</strong><br/>
+                                <span t-field="o.area_id.name"/> (<span t-field="o.area_id.code"/>)
                             </div>
                         </div>
 
-                        <div class="mt-5 mb-5 text-center">
-                            <p>Este documento ha cumplido con el flujo de validación establecido y se encuentra actualmente en estado:</p>
-                            <h2 style="color: #27ae60; border: 2px solid #27ae60; display: inline-block; padding: 10px 30px; border-radius: 5px;">VIGENTE</h2>
+                        <div class="row mt-3">
+                            <div class="col-6">
+                                <strong>Tipo de Documento:</strong><br/>
+                                <span t-field="o.type_id.name"/>
+                            </div>
+                            <div class="col-6">
+                                <strong>Fecha de Emisión:</strong><br/>
+                                <span t-field="o.issue_date"/>
+                            </div>
                         </div>
 
-                        <div class="row mt-5" style="page-break-inside: avoid;">
-                            
-                            <div class="col-4 text-center">
-                                <div style="height: 100px; display: flex; align-items: end; justify-content: center;">
-                                    <span t-if="doc.owner_id.signature" 
-                                          t-field="doc.owner_id.signature" 
-                                          t-options='{"widget": "image"}' 
-                                          style="max-height: 80px; display:block; margin: 0 auto;"/>
-                                </div>
-                                <div style="border-top: 1px solid #000; margin-top: 10px; padding-top: 5px;">
-                                    <strong><span t-field="doc.owner_id.name"/></strong><br/>
-                                    <small>Elaboración / Propietario</small><br/>
-                                    <small t-field="doc.create_date" t-options='{"widget": "date"}'/>
-                                </div>
+                        <div class="row mt-4" t-if="o.description">
+                            <div class="col-12">
+                                <strong>Descripción / Alcance:</strong>
+                                <p t-field="o.description" class="text-justify border p-2 bg-light"/>
                             </div>
+                        </div>
 
-                            <div class="col-4 text-center">
-                                <div style="height: 100px; display: flex; align-items: end; justify-content: center;">
-                                    <span t-if="doc.reviewed_by_id and doc.reviewed_by_id.signature" 
-                                          t-field="doc.reviewed_by_id.signature" 
-                                          t-options='{"widget": "image"}' 
-                                          style="max-height: 80px; display:block; margin: 0 auto;"/>
-                                </div>
-                                <div style="border-top: 1px solid #000; margin-top: 10px; padding-top: 5px;">
-                                    <t t-if="doc.reviewed_by_id">
-                                        <strong><span t-field="doc.reviewed_by_id.name"/></strong><br/>
-                                        <small>Revisión Técnica</small><br/>
-                                        <small t-field="doc.review_date"/>
-                                    </t>
-                                    <t t-else="">
-                                        <span class="text-muted">N/A (Revisión Menor)</span>
-                                    </t>
-                                </div>
-                            </div>
+                        <h3 class="mt-5 mb-3">Firmas de Autorización</h3>
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr class="bg-light">
+                                    <th>Rol</th>
+                                    <th>Usuario</th>
+                                    <th>Fecha</th>
+                                    <th>Firma Digital</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>Propietario / Autor</strong></td>
+                                    <td><span t-field="o.owner_id.name"/></td>
+                                    <td><span t-field="o.create_date" t-options='{"widget": "date"}'/></td>
+                                    <td><span class="badge rounded-pill text-bg-secondary">Creado</span></td>
+                                </tr>
+                                <tr t-if="o.reviewed_by_id">
+                                    <td><strong>Revisor Técnico</strong></td>
+                                    <td><span t-field="o.reviewed_by_id.name"/></td>
+                                    <td><span t-field="o.review_date"/></td>
+                                    <td><span class="badge rounded-pill text-bg-info">Validado</span></td>
+                                </tr>
+                                <tr t-if="o.approved_by_id">
+                                    <td><strong>Aprobación Final</strong></td>
+                                    <td><span t-field="o.approved_by_id.name"/></td>
+                                    <td><span t-field="o.approval_date"/></td>
+                                    <td><span class="badge rounded-pill text-bg-success">Aprobado</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
 
-                            <div class="col-4 text-center">
-                                <div style="height: 100px; display: flex; align-items: end; justify-content: center;">
-                                    <span t-if="doc.approved_by_id and doc.approved_by_id.signature" 
-                                          t-field="doc.approved_by_id.signature" 
-                                          t-options='{"widget": "image"}' 
-                                          style="max-height: 80px; display:block; margin: 0 auto;"/>
-                                </div>
-                                <div style="border-top: 1px solid #000; margin-top: 10px; padding-top: 5px;">
-                                    <strong><span t-field="doc.approved_by_id.name"/></strong><br/>
-                                    <small>Aprobación Final</small><br/>
-                                    <small t-field="doc.approval_date"/>
-                                </div>
-                            </div>
-
+                        <div style="page-break-inside: avoid;">
+                            <h3 class="mt-5 mb-3">Historial de Cambios y Versiones</h3>
+                            <table class="table table-sm table-striped" style="font-size: 11px;">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 15%;">Fecha</th>
+                                        <th style="width: 10%;">Versión</th>
+                                        <th style="width: 20%;">Usuario</th>
+                                        <th style="width: 55%;">Detalle / Motivo</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr t-foreach="o.get_full_audit_trail()" t-as="log">
+                                        <td><span t-esc="log['date']" t-options='{"widget": "datetime"}'/></td>
+                                        <td class="text-center"><span t-esc="log['version']"/></td>
+                                        <td><span t-esc="log['user']"/></td>
+                                        <td>
+                                            <span t-if="log['type'] == 'reject'" style="color: red; font-weight: bold;">
+                                                <t t-esc="log['action']"/>
+                                            </span>
+                                            <span t-else="">
+                                                <t t-esc="log['action']"/>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
 
                         <div class="text-center text-muted mt-5" style="font-size: 10px;">
-                            <p>Documento generado electrónicamente por Odoo Quality System. <br/>
-                            La validez de este certificado puede ser verificada en el repositorio maestro del sistema.</p>
+                            Este documento ha sido generado electrónicamente por el sistema de gestión de calidad.
+                            Cualquier copia impresa se considera "Copia No Controlada".
                         </div>
                     </div>
                 </t>

@@ -1,0 +1,15 @@
+# Python
+*.py[cod]
+__pycache__/
+*.so
+.env
+venv/
+bin/
+
+# Odoo
+*.log
+filestore/
+sessions/
+
+# Sistema
+.DS_Store

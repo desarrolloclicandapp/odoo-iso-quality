@@ -1,215 +1,401 @@
 # -*- coding: utf-8 -*-
 from odoo import models, fields, api, _
 from odoo.exceptions import ValidationError
+import base64
+import io
+import csv
+import openai
+import re
+# ==========================================
+# 1. MODELOS DE CONFIGURACIÓN
+# ==========================================
 
-# --- MODELO CARPETAS (Sin cambios) ---
+class DocumentArea(models.Model):
+    _name = 'document.area'
+    _description = 'Áreas de la Empresa'
+    name = fields.Char('Nombre del Área', required=True)
+    code = fields.Char('Código (Abreviatura)', required=True, size=3, help="Ej: MKT, RRH")
+    _sql_constraints = [('code_uniq', 'unique(code)', '¡El código de área debe ser único!')]
+
+class DocumentCategory(models.Model):
+    _name = 'document.category'
+    _description = 'Categorías de Documentos'
+    name = fields.Char('Nombre Categoría', required=True)
+    code = fields.Char('Código', required=True, size=2, help="Ej: 01, AD, OP")
+
+class DocumentType(models.Model):
+    _name = 'document.type'
+    _description = 'Tipos de Documento'
+    name = fields.Char('Tipo de Documento', required=True)
+    code = fields.Char('Código', required=True, size=2, help="Ej: PR, MN, PL")
+
+class DocumentTag(models.Model):
+    _name = 'document.tag'
+    _description = 'Etiquetas de Documentos'
+    name = fields.Char('Nombre', required=True)
+    color = fields.Integer('Color')
+
+# ==========================================
+# 2. MODELO DE CARPETAS
+# ==========================================
+
 class DocumentFolder(models.Model):
     _name = 'document.folder'
-    _description = 'Carpetas de Documentos'
+    _description = 'Carpetas'
     _parent_store = True
-    _order = 'complete_name'
     _rec_name = 'complete_name'
-
-    name = fields.Char(string='Nombre de Carpeta', required=True)
-    parent_id = fields.Many2one('document.folder', string='Carpeta Padre', ondelete='cascade', index=True)
+    name = fields.Char(required=True)
+    parent_id = fields.Many2one('document.folder', ondelete='cascade', index=True)
     parent_path = fields.Char(index=True, unaccent=False)
-    complete_name = fields.Char('Ruta Completa', compute='_compute_complete_name', store=True)
-    child_ids = fields.One2many('document.folder', 'parent_id', string='Subcarpetas')
-
+    complete_name = fields.Char(compute='_compute_complete_name', store=True)
+    child_ids = fields.One2many('document.folder', 'parent_id')
+    
     @api.depends('name', 'parent_id.complete_name')
     def _compute_complete_name(self):
-        for folder in self:
-            if folder.parent_id:
-                folder.complete_name = '%s / %s' % (folder.parent_id.complete_name, folder.name)
-            else:
-                folder.complete_name = folder.name
+        for f in self:
+            f.complete_name = '%s / %s' % (f.parent_id.complete_name, f.name) if f.parent_id else f.name
 
-# --- MODELO DOCUMENTOS ---
-# --- MODELO DOCUMENTOS ---
+# ==========================================
+# 3. MODELO PRINCIPAL (DOCUMENT CONTROL)
+# ==========================================
+
 class DocumentControl(models.Model):
     _name = 'document.control'
     _description = 'Control de Documentos'
     _inherit = ['mail.thread', 'mail.activity.mixin']
     _order = 'code desc, version desc'
 
-    # --- 1. Identificación y Alcance ---
+    # --- IDENTIFICACIÓN ---
     name = fields.Char(string='Título', required=True, tracking=True)
-    code = fields.Char(string='Código', default='Nuevo', readonly=True, index=True)
-    folder_id = fields.Many2one('document.folder', string='Guardar en Carpeta', required=True, tracking=True)
+    code = fields.Char(string='Código', default='Borrador', readonly=True, index=True)
     
-    # NUEVO CAMPO: Alcance (Define si es burocracia ISO o subida rápida)
-    document_scope = fields.Selection([
-        ('internal', 'Interno (Controlado ISO)'),
-        ('external', 'Externo (Referencia / Biblioteca)')
-    ], string='Origen del Documento', default='internal', required=True, tracking=True)
-
-    document_type = fields.Selection([
-        ('PR', 'Procedimiento'), ('PL', 'Política'),
-        ('MM', 'Marketing'), ('CT', 'Contrato'),
-        ('MN', 'Manual'), ('OT', 'Otro')
-    ], string='Tipo Doc.', required=True)
-
-    area = fields.Selection([
-        ('MKT', 'Marketing'), ('COM', 'Comercial'),
-        ('OPR', 'Operaciones'), ('HR', 'RRHH'),
-        ('LEG', 'Legal'), ('GEN', 'General')
-    ], string='Área', required=True)
-
+    # Campos Dinámicos
+    area_id = fields.Many2one('document.area', string='Área', required=True, tracking=True)
+    category_id = fields.Many2one('document.category', string='Categoría', tracking=True)
+    type_id = fields.Many2one('document.type', string='Tipo Doc.', required=True, tracking=True)
+    tag_ids = fields.Many2many('document.tag', string='Etiquetas')
+    description = fields.Text(string='Descripción / Resumen')
+    
+    folder_id = fields.Many2one('document.folder', string='Carpeta', required=True, tracking=True)
+    document_scope = fields.Selection([('internal', 'Interno ISO'),('external', 'Externo')], default='internal', required=True)
     sequence_number = fields.Integer(string='Secuencial', readonly=True)
 
-    # --- 2. Versionado ---
-    version = fields.Char(string='Versión', default='1.0', required=True, tracking=True)
-    source_document_id = fields.Many2one('document.control', string='Versión Anterior', readonly=True)
-    active_revision_id = fields.Many2one('document.control', string='Revisión en Curso', readonly=True)
-    revision_type = fields.Selection([('major', 'Mayor'), ('minor', 'Menor')], string='Tipo de Revisión')
-
-    state = fields.Selection([
-        ('draft', 'Borrador'),
-        ('upload', 'Carga de Archivos'),
-        ('review', 'En Revisión'),
-        ('validate', 'En Aprobación'),
-        ('approved', 'Publicado / Vigente'), # Renombrado para que sirva a ambos
-        ('rejected', 'Rechazado'),
-        ('obsolete', 'Obsoleto')
-    ], string='Estado', default='draft', tracking=True)
-
-    # --- 3. Archivos ---
-    # Para externos, solo exigiremos el PDF (o archivo final), el editable es opcional
-    editable_file = fields.Binary(string='Archivo Editable', attachment=True)
-    editable_filename = fields.Char(string='Nombre Editable')
-    pdf_file = fields.Binary(string='Archivo Final (PDF/Video/Etc)', attachment=True)
-    pdf_filename = fields.Char(string='Nombre Archivo Final')
-
-    # --- 4. Responsables ---
-    owner_id = fields.Many2one('res.users', string='Propietario', default=lambda self: self.env.user, required=True)
-    reviewer_ids = fields.Many2many('res.users', 'doc_rev_rel', string='Equipo Revisor')
-    approver_ids = fields.Many2many('res.users', 'doc_app_rel', string='Equipo Aprobador')
+    # --- VERSIONADO ---
+    version = fields.Char(default='1.0', required=True, tracking=True)
+    change_reason = fields.Text(string='Motivo del Cambio', tracking=True)
+    source_document_id = fields.Many2one('document.control', readonly=True)
+    active_revision_id = fields.Many2one('document.control', readonly=True)
+    revision_type = fields.Selection([('major', 'Mayor'), ('minor', 'Menor')])
     
-    # Firmas
-    reviewed_by_id = fields.Many2one('res.users', string='Revisado por', readonly=True)
-    review_date = fields.Datetime(string='Fecha Revisión', readonly=True)
-    approved_by_id = fields.Many2one('res.users', string='Aprobado por', readonly=True)
-    approval_date = fields.Datetime(string='Fecha Aprobación', readonly=True)
+    state = fields.Selection([
+        ('draft', 'Borrador'), ('upload', 'Carga'), ('review', 'En Revisión'),
+        ('validate', 'En Aprobación'), ('approved', 'Publicado'),
+        ('rejected', 'Rechazado'), ('obsolete', 'Obsoleto')
+    ], default='draft', tracking=True)
+
+    # --- ARCHIVOS ---
+    editable_file = fields.Binary(string='Archivo Editable/Fuente', attachment=True)
+    editable_filename = fields.Char(string='Nombre Editable')
+    pdf_file = fields.Binary(string='Archivo Final (PDF/Video)', attachment=True)
+    pdf_filename = fields.Char(string='Nombre Final')
+    
+    # Visor HTML
+    preview_html = fields.Html(compute='_compute_preview_html', string='Visor', sanitize=False)
+
+    # --- RESPONSABLES ---
+    owner_id = fields.Many2one('res.users', default=lambda self: self.env.user, required=True)
+    reviewer_ids = fields.Many2many('res.users', 'doc_rev_rel', string='Revisores')
+    approver_ids = fields.Many2many('res.users', 'doc_app_rel', string='Aprobadores')
+    
+    reviewed_by_id = fields.Many2one('res.users', readonly=True)
+    review_date = fields.Datetime(readonly=True)
+    approved_by_id = fields.Many2one('res.users', readonly=True)
+    approval_date = fields.Datetime(readonly=True)
     
     issue_date = fields.Date(string='Fecha Emisión')
-    next_review_date = fields.Date(string='Próxima Revisión')
     is_owner = fields.Boolean(compute='_compute_is_owner')
 
-    _sql_constraints = [
-        ('code_version_uniq', 'unique(code, version)', '¡Ya existe una revisión con este código y versión!')
-    ]
+    _sql_constraints = [('code_version_uniq', 'unique(code, version)', '¡Versión duplicada!')]
 
+    # ==========================================
+    # 4. LÓGICA COMPUTADA
+    # ==========================================
+    def action_generate_ai_help(self):
+        self.ensure_one()
+        
+        # 1. Obtenemos la API Key desde la configuración del sistema
+        api_key = self.env['ir.config_parameter'].sudo().get_param('openai_api_key')
+        if not api_key:
+            raise UserError("⚠️ Falta la API Key de OpenAI.\nVe a Ajustes -> Técnico -> Parámetros del Sistema y crea uno llamado 'openai_api_key'.")
+
+        # 2. Preparamos el Prompt (la instrucción para la IA)
+        info_doc = f"Título: {self.name}. Área: {self.area_id.name}. Tipo: {self.type_id.name}."
+        
+        prompt_system = "Eres un experto en Gestión de Calidad ISO 9001. Tu trabajo es ayudar a clasificar documentos."
+        prompt_user = (
+            f"Basado en esta información: '{info_doc}', realiza dos tareas:\n"
+            "1. Escribe una 'Descripción/Resumen' profesional, técnica y corta (máximo 2 líneas) que explique el propósito probable de este documento.\n"
+            "2. Sugiere 3 palabras clave (etiquetas) separadas por comas.\n\n"
+            "Formato de respuesta obligatorio:\n"
+            "DESCRIPCION: [Tu descripción aquí]\n"
+            "ETIQUETAS: [Tag1, Tag2, Tag3]"
+        )
+
+        try:
+            # 3. Llamamos a la API
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo", # Puedes usar "gpt-4" si quieres más inteligencia (es un poco más caro)
+                messages=[
+                    {"role": "system", "content": prompt_system},
+                    {"role": "user", "content": prompt_user}
+                ],
+                temperature=0.7,
+            )
+            
+            # 4. Procesamos la respuesta
+            content = response.choices[0].message.content
+            
+            # Separamos la descripción de las etiquetas
+            desc_text = ""
+            tags_text = ""
+            
+            for line in content.split('\n'):
+                if "DESCRIPCION:" in line:
+                    desc_text = line.replace("DESCRIPCION:", "").strip()
+                elif "ETIQUETAS:" in line:
+                    tags_text = line.replace("ETIQUETAS:", "").strip()
+
+            # 5. Guardamos la Descripción
+            if desc_text:
+                self.description = desc_text
+
+            # 6. Guardamos las Etiquetas (Creándolas si no existen)
+            if tags_text:
+                tag_list = [t.strip() for t in tags_text.split(',')]
+                new_tag_ids = []
+                for tag_name in tag_list:
+                    # Buscamos si la etiqueta ya existe (insensible a mayúsculas)
+                    existing_tag = self.env['document.tag'].search([('name', '=ilike', tag_name)], limit=1)
+                    if existing_tag:
+                        new_tag_ids.append(existing_tag.id)
+                    else:
+                        # Si no existe, la creamos con un color al azar (ej: 1)
+                        new_tag = self.env['document.tag'].create({'name': tag_name, 'color': 1})
+                        new_tag_ids.append(new_tag.id)
+                
+                # Añadimos las nuevas etiquetas a las que ya tuviera
+                self.tag_ids = [(4, tid) for tid in new_tag_ids]
+                
+        except Exception as e:
+            raise UserError(f"Error al conectar con la IA: {str(e)}")
     @api.depends('owner_id')
     def _compute_is_owner(self):
         for record in self:
             record.is_owner = record.env.user == record.owner_id
 
-    # --- LÓGICA DE NEGOCIO ---
+    @api.depends('pdf_file', 'pdf_filename', 'editable_file', 'editable_filename')
+    def _compute_preview_html(self):
+        """ Genera el HTML para el visor (PDF, Video, Imagen o CSV) """
+        for record in self:
+            record.preview_html = False
+            content = ""
+            
+            # A. Archivos Multimedia/PDF
+            if record.pdf_file and record.pdf_filename:
+                file_url = f"/web/content/document.control/{record.id}/pdf_file"
+                fname = record.pdf_filename.lower()
+
+                if fname.endswith('.pdf'):
+                    content = f'<iframe src="{file_url}" width="100%" height="85vh" style="border:none;"></iframe>'
+                elif fname.endswith(('.mp4', '.webm')):
+                    content = f'<div style="text-align:center; height:85vh; background:black; display:flex; align-items:center; justify-content:center;"><video controls style="max-width:100%; max-height:100%;"><source src="{file_url}" type="video/mp4"></video></div>'
+                elif fname.endswith(('.jpg', '.png', '.jpeg', '.gif')):
+                    content = f'<div style="text-align:center; height:85vh; display:flex; align-items:center; justify-content:center; overflow:auto;"><img src="{file_url}" style="max-width:100%; max-height:100%;"/></div>'
+
+            # B. Archivos CSV (Tabla HTML)
+            elif record.editable_file and record.editable_filename:
+                fname = record.editable_filename.lower()
+                if fname.endswith('.csv'):
+                    try:
+                        csv_data = base64.b64decode(record.editable_file).decode('utf-8')
+                        f = io.StringIO(csv_data)
+                        reader = csv.reader(f, delimiter=',')
+                        table_html = '<div style="overflow:auto; max-height:85vh;"><table class="table table-bordered table-striped" style="background:white; margin:0;">'
+                        for i, row in enumerate(reader):
+                            tag = 'th' if i == 0 else 'td'
+                            table_html += '<tr>' + ''.join(f'<{tag} style="white-space:nowrap;">{cell}</{tag}>' for cell in row) + '</tr>'
+                        table_html += '</table></div>'
+                        content = table_html
+                    except Exception as e:
+                        content = f'<div class="alert alert-warning">Error al leer CSV: {str(e)}</div>'
+
+            if content:
+                record.preview_html = content
+            else:
+                record.preview_html = """
+                    <div class="alert alert-info text-center" style="margin-top:20px;">
+                        <h4>📂 Vista previa no disponible</h4>
+                        <p>Descarga el archivo para verlo.</p>
+                    </div>
+                """
+
+    def _close_activity_for_current_user(self, feedback):
+        domain = [('res_id', '=', self.id), ('res_model', '=', 'document.control'), ('user_id', '=', self.env.user.id)]
+        self.env['mail.activity'].search(domain).action_feedback(feedback=feedback)
+
+    def get_full_audit_trail(self):
+        """ Recolecta el historial completo de esta versión y las anteriores """
+        trail = []
+        
+        # 1. Recopilar todas las versiones (La actual + los ancestros)
+        all_docs = self
+        current = self
+        while current.source_document_id:
+            current = current.source_document_id
+            all_docs += current
+        
+        # 2. Iterar sobre cada documento para sacar sus mensajes
+        for doc in all_docs:
+            # Buscamos mensajes de tipo comentario (notas de rechazo) o notificaciones de sistema (cambios de estado)
+            messages = self.env['mail.message'].search([
+                ('model', '=', 'document.control'),
+                ('res_id', '=', doc.id),
+                ('message_type', 'in', ['comment', 'notification']),
+                ('body', '!=', '') # Que no estén vacíos
+            ], order='date desc')
+
+            for msg in messages:
+                # Limpieza básica de HTML (Quitar <p>, <br>, etc para el PDF)
+                clean_body = re.sub('<[^<]+?>', '', msg.body or '')
+                
+                # Solo agregamos si hay texto relevante
+                if clean_body:
+                    trail.append({
+                        'date': msg.date,
+                        'version': doc.version,
+                        'user': msg.author_id.name or 'Sistema',
+                        'action': clean_body,
+                        'type': 'reject' if 'Rechazado' in clean_body else 'info'
+                    })
+        
+        # 3. Ordenar todo por fecha (del más reciente al más antiguo)
+        return sorted(trail, key=lambda k: k['date'], reverse=True)
+
+    def action_open_preview_popup(self):
+        """ Abre el Pop-up de Vista Previa """
+        self.ensure_one()
+        return {
+            'name': 'Vista Previa: ' + self.name,
+            'type': 'ir.actions.act_window',
+            'res_model': 'document.control',
+            'res_id': self.id,
+            'view_mode': 'form',
+            'view_id': self.env.ref('custom_document_control.view_document_preview_popup').id,
+            'target': 'new',
+            'flags': {'mode': 'readonly'},
+        }
+
+    # ==========================================
+    # 5. FLUJO Y ACCIONES
+    # ==========================================
 
     def action_start_flow(self):
+        """ Genera código: AREA-CATEGORIA-TIPO-SEQ """
         self.ensure_one()
-        # Generamos código solo si es nuevo
-        if self.code == 'Nuevo':
-            domain = [('area', '=', self.area), ('document_type', '=', self.document_type), ('code', '!=', 'Nuevo'), ('id', '!=', self.id)]
-            last = self.search(domain, order='sequence_number desc', limit=1)
-            nxt = (last.sequence_number + 1) if last else 1
-            self.code = f"{self.area}-{self.document_type}-{nxt:03d}"
-            self.sequence_number = nxt
-        
+        if self.code == 'Borrador':
+            area = self.area_id.code
+            cat = self.category_id.code if self.category_id else 'GEN'
+            tipo = self.type_id.code
+            
+            prefix = f"{area}-{cat}-{tipo}-"
+            domain = [('code', 'like', prefix + '%')]
+            last = self.search(domain, order='code desc', limit=1)
+            
+            if last and last.code != 'Borrador':
+                try: new_seq = int(last.code.split('-')[-1]) + 1
+                except: new_seq = 1
+            else:
+                new_seq = 1
+                
+            self.code = f"{prefix}{new_seq:03d}"
+            self.sequence_number = new_seq
+            
         self.state = 'upload'
+        self._close_activity_for_current_user("Carga iniciada.")
 
-    # --- NUEVO BOTÓN: PUBLICACIÓN DIRECTA (Solo para Externos) ---
     def action_publish_direct(self):
         self.ensure_one()
-        if self.document_scope != 'external':
-            raise ValidationError("La publicación directa solo es válida para documentos externos.")
-        
-        if not self.pdf_file:
-            raise ValidationError("Debes subir el archivo final (PDF, Video, Manual) antes de publicar.")
-
-        # Aprobación automática
-        self.state = 'approved'
-        self.issue_date = fields.Date.today()
-        self.approved_by_id = self.env.user # Se auto-aprueba por quien lo sube
-        self.approval_date = fields.Datetime.now()
-        self.message_post(body="🚀 Documento Externo publicado directamente a la biblioteca.")
-
-    # --- FLUJOS NORMALES (ISO) ---
-    # (Mantenemos los mismos métodos de antes, solo añadimos validación de scope)
-
-    def _create_revision(self, rev_type):
-        self.ensure_one()
-        # ... (Copia del código anterior de _create_revision) ...
-        # (Por brevedad, asumo que mantienes la lógica de copy() igual)
-        # Solo asegúrate de copiar también el 'document_scope'
-        try:
-            current_v = float(self.version)
-        except ValueError:
-            current_v = 1.0
-        new_v = f"{int(current_v) + 1}.0" if rev_type == 'major' else f"{current_v + 0.1:.1f}"
-
-        new_doc = self.copy({
-            'version': new_v,
-            'state': 'upload',
-            'source_document_id': self.id,
-            'code': self.code,
-            'sequence_number': self.sequence_number,
-            'revision_type': rev_type,
-            'document_scope': self.document_scope, # Copiar el tipo
-            'editable_file': False,
-            'pdf_file': False,
-            'issue_date': False,
-        })
-        self.active_revision_id = new_doc.id
-        return {'type': 'ir.actions.act_window', 'name': f'Nueva Versión {new_v}', 'res_model': 'document.control', 'view_mode': 'form', 'res_id': new_doc.id, 'target': 'current'}
-
-    def action_create_minor_rev(self): return self._create_revision('minor')
-    def action_create_major_rev(self): return self._create_revision('major')
+        if self.document_scope != 'external': raise ValidationError("Solo para Externos.")
+        self.write({'state': 'approved', 'issue_date': fields.Date.today(), 'approved_by_id': self.env.user.id, 'approval_date': fields.Datetime.now()})
+        self.message_post(body="🚀 Publicado.")
+        self._close_activity_for_current_user("Publicado.")
 
     def action_submit_review(self):
         self.ensure_one()
-        if self.document_scope == 'external':
-            raise ValidationError("Los documentos externos no requieren revisión. Usa 'Publicar Directamente'.")
-            
-        if not self.editable_file or not self.pdf_file:
-            raise ValidationError("Faltan archivos (Word y PDF).")
-            
+        if self.document_scope == 'internal' and self.version != '1.0' and not self.change_reason:
+            raise ValidationError("Falta Motivo del Cambio.")
+        
+        self._close_activity_for_current_user("Enviado a revisión.")
+        
         if self.revision_type == 'minor':
             if not self.approver_ids: raise ValidationError("Asigna Aprobadores.")
             self.state = 'validate'
-            self.message_post(body="⏩ Revisión Menor: Saltando etapa técnica.")
-            for user in self.approver_ids:
-                self.activity_schedule('mail.mail_activity_data_todo', user_id=user.id, note=f'Aprobación (v{self.version}): {self.code}')
+            for u in self.approver_ids:
+                self.activity_schedule('mail.mail_activity_data_todo', user_id=u.id, note=f'Aprobación v{self.version}')
         else:
-            if not self.reviewer_ids: raise ValidationError("Debes asignar Revisores.")
+            if not self.reviewer_ids: raise ValidationError("Asigna Revisores.")
             self.state = 'review'
-            for user in self.reviewer_ids:
-                self.activity_schedule('mail.mail_activity_data_todo', user_id=user.id, note=f'Revisión Técnica (v{self.version}): {self.code}')
+            for u in self.reviewer_ids:
+                self.activity_schedule('mail.mail_activity_data_todo', user_id=u.id, note=f'Revisión v{self.version}')
 
     def action_review_pass(self):
         self.ensure_one()
         if self.env.user not in self.reviewer_ids and not self.env.user.has_group('base.group_system'):
-            raise ValidationError("No eres Revisor.")
-        if not self.approver_ids: raise ValidationError("Faltan Aprobadores.")
-        
+            raise ValidationError("⛔ No tienes permiso. Solo los Revisores pueden dar el Visto Bueno.")
+
         self.write({'state': 'validate', 'reviewed_by_id': self.env.user.id, 'review_date': fields.Datetime.now()})
-        self.message_post(body="✅ Revisión Técnica Aprobada.")
-        for user in self.approver_ids:
-            self.activity_schedule('mail.mail_activity_data_todo', user_id=user.id, note=f'Visto Bueno recibido. Requiere Aprobación Final: {self.code}')
+        self._close_activity_for_current_user("Visto Bueno.")
+        
+        for u in self.approver_ids:
+            self.activity_schedule('mail.mail_activity_data_todo', user_id=u.id, note='Requiere Aprobación Final')
 
     def action_approve(self):
         self.ensure_one()
         if self.env.user not in self.approver_ids and not self.env.user.has_group('base.group_system'):
-            raise ValidationError("No tienes permiso de Aprobación Final.")
-        
-        self.write({'state': 'approved', 'issue_date': fields.Date.today(), 'approved_by_id': self.env.user.id, 'approval_date': fields.Datetime.now()})
-        self.message_post(body=f"🏆 Versión {self.version} Aprobada Oficialmente.")
+            raise ValidationError("⛔ No tienes permiso. Solo los Aprobadores pueden firmar.")
 
+        self.write({'state': 'approved', 'issue_date': fields.Date.today(), 'approved_by_id': self.env.user.id, 'approval_date': fields.Datetime.now()})
+        self._close_activity_for_current_user("Aprobado.")
+        
         if self.source_document_id:
             self.source_document_id.write({'state': 'obsolete', 'active_revision_id': False})
-            self.source_document_id.message_post(body=f"⛔ Reemplazado por v{self.version}")
 
     def action_reject(self):
+        """ Abre el Wizard de Rechazo """
         self.ensure_one()
-        self.state = 'upload'
-        self.message_post(body="❌ Devuelto para correcciones.")
+        return {
+            'name': 'Indicar Motivo de Rechazo',
+            'type': 'ir.actions.act_window',
+            'res_model': 'document.reject.wizard',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {'default_document_id': self.id} # Le pasamos el ID del documento al wizard
+        }
+
+    def _create_revision(self, rev_type):
+        self.ensure_one()
+        try: v = float(self.version)
+        except: v = 1.0
+        new_v = f"{int(v)+1}.0" if rev_type == 'major' else f"{v+0.1:.1f}"
+        new_doc = self.copy({
+            'version': new_v, 'state': 'upload', 'source_document_id': self.id,
+            'code': self.code, 'revision_type': rev_type, 
+            'editable_file': False, 'pdf_file': False, 'change_reason': False,
+            'area_id': self.area_id.id, 'type_id': self.type_id.id, 'category_id': self.category_id.id
+        })
+        self.active_revision_id = new_doc.id
+        return {'type': 'ir.actions.act_window', 'res_model': 'document.control', 'res_id': new_doc.id, 'view_mode': 'form', 'target': 'current'}
+
+    def action_create_minor_rev(self): return self._create_revision('minor')
+    def action_create_major_rev(self): return self._create_revision('major')
