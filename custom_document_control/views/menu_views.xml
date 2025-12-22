@@ -32,5 +32,5 @@
         <menuitem id="menu_conf_cats" name="Categorías" parent="menu_configuration" action="action_document_cat" sequence="2"/>
         <menuitem id="menu_conf_types" name="Tipos de Doc." parent="menu_configuration" action="action_document_type" sequence="3"/>
         <menuitem id="menu_conf_folders" name="Carpetas" parent="menu_configuration" action="action_document_folder" sequence="4"/>
-
+	<menuitem id="menu_conf_tags" name="Etiquetas" parent="menu_configuration" action="action_document_tag" sequence="5"/>
 </odoo>

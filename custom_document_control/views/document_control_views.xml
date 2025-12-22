@@ -5,10 +5,7 @@
         <field name="name">document.area.list</field>
         <field name="model">document.area</field>
         <field name="arch" type="xml">
-            <list editable="bottom">
-                <field name="name"/>
-                <field name="code"/>
-            </list>
+            <list editable="bottom"><field name="name"/><field name="code"/></list>
         </field>
     </record>
     <record id="action_document_area" model="ir.actions.act_window">
@@ -21,10 +18,7 @@
         <field name="name">document.category.list</field>
         <field name="model">document.category</field>
         <field name="arch" type="xml">
-            <list editable="bottom">
-                <field name="name"/>
-                <field name="code"/>
-            </list>
+            <list editable="bottom"><field name="name"/><field name="code"/></list>
         </field>
     </record>
     <record id="action_document_cat" model="ir.actions.act_window">
@@ -37,15 +31,28 @@
         <field name="name">document.type.list</field>
         <field name="model">document.type</field>
         <field name="arch" type="xml">
-            <list editable="bottom">
-                <field name="name"/>
-                <field name="code"/>
-            </list>
+            <list editable="bottom"><field name="name"/><field name="code"/></list>
         </field>
     </record>
     <record id="action_document_type" model="ir.actions.act_window">
         <field name="name">Tipos de Documento</field>
         <field name="res_model">document.type</field>
+        <field name="view_mode">list</field>
+    </record>
+
+    <record id="view_document_tag_tree" model="ir.ui.view">
+        <field name="name">document.tag.list</field>
+        <field name="model">document.tag</field>
+        <field name="arch" type="xml">
+            <list editable="bottom">
+                <field name="name"/>
+                <field name="color" widget="color_picker"/>
+            </list>
+        </field>
+    </record>
+    <record id="action_document_tag" model="ir.actions.act_window">
+        <field name="name">Etiquetas de Documentos</field>
+        <field name="res_model">document.tag</field>
         <field name="view_mode">list</field>
     </record>
 
@@ -55,15 +62,8 @@
         <field name="arch" type="xml">
             <form>
                 <sheet>
-                    <group>
-                        <field name="name"/>
-                        <field name="parent_id"/>
-                    </group>
-                    <notebook>
-                        <page string="Subcarpetas">
-                            <field name="child_ids"><list><field name="name"/></list></field>
-                        </page>
-                    </notebook>
+                    <group><field name="name"/><field name="parent_id"/></group>
+                    <notebook><page string="Subcarpetas"><field name="child_ids"><list><field name="name"/></list></field></page></notebook>
                 </sheet>
             </form>
         </field>
@@ -81,7 +81,6 @@
         <field name="view_mode">list,form</field>
     </record>
 
-
     <record id="view_document_control_tree" model="ir.ui.view">
         <field name="name">document.control.list</field>
         <field name="model">document.control</field>
@@ -94,11 +93,7 @@
                 <field name="version"/>
                 <field name="tag_ids" widget="many2many_tags" options="{'color_field': 'color'}"/>
                 <field name="folder_id" optional="hide"/>
-                <field name="state" widget="badge" 
-                       decoration-info="state == 'draft'"
-                       decoration-primary="state == 'upload'"
-                       decoration-warning="state in ('review','validate')" 
-                       decoration-success="state == 'approved'"/>
+                <field name="state" widget="badge" decoration-info="state == 'draft'" decoration-primary="state == 'upload'" decoration-warning="state in ('review','validate')" decoration-success="state == 'approved'"/>
             </list>
         </field>
     </record>
@@ -113,7 +108,6 @@
                     <button name="action_submit_review" string="Enviar a Revisión" type="object" class="oe_highlight" invisible="state != 'upload'"/>
                     <button name="action_review_pass" string="✅ Visto Bueno" type="object" class="oe_highlight" invisible="state != 'review'"/>
                     <button name="action_approve" string="🏆 Aprobar Final" type="object" class="oe_highlight" invisible="state != 'validate'"/>
-                    
                     <button name="action_publish_direct" string="🚀 Publicar Directo" type="object" class="btn-success" invisible="state != 'upload' or document_scope == 'internal'"/>
                     <button name="action_reject" string="❌ Rechazar" type="object" class="btn-danger" invisible="state not in ('review', 'validate')"/>
                     
@@ -121,20 +115,22 @@
                     <button name="action_create_major_rev" string="🔄 Versión Mayor" type="object" class="btn-primary" invisible="state != 'approved' or active_revision_id" confirm="¿Crear nueva versión mayor?"/>
                     
                     <button name="action_open_preview_popup" string="👁️ Ver Archivo" type="object" class="btn-info" invisible="not pdf_file and not editable_file"/>
-                    <button name="%(custom_document_control.action_report_document_certificate)d" string="🖨️ Certificado" type="action" invisible="state != 'approved'"/>
+                    
+                    <button name="action_view_certificate" string="🖨️ Ver Certificado" type="object" class="btn-secondary" invisible="state != 'approved'"/>
                     
                     <field name="state" widget="statusbar" statusbar_visible="draft,upload,approved"/>
                 </header>
 
                 <div class="alert alert-warning" role="alert" invisible="not active_revision_id">
-                    <strong>¡Atención!</strong> Existe una nueva versión en curso: <field name="active_revision_id" widget="url" readonly="1" string="Ver Borrador"/>
+                    <strong>¡Atención!</strong> Nueva versión en curso: <field name="active_revision_id" widget="url" readonly="1" string="Ver Borrador"/>
                 </div>
 
                 <sheet>
                     <div class="oe_title">
                         <h1><field name="code"/> <span class="o_tag o_tag_color_10">v<field name="version"/></span></h1>
                         <h2><field name="name" placeholder="Título del Documento..." readonly="state != 'draft'"/></h2>
-                        <field name="tag_ids" widget="many2many_tags" options="{'color_field': 'color'}" placeholder="Etiquetas..."/>
+                        
+                        <field name="tag_ids" widget="many2many_tags" options="{'color_field': 'color', 'no_create': True, 'no_edit': True}" placeholder="Selecciona etiquetas..."/>
                     </div>
 
                     <group>
@@ -148,37 +144,31 @@
                         <group string="Detalles">
                             <field name="owner_id" readonly="state != 'draft'"/>
                             <field name="issue_date" readonly="1"/>
-                            <field name="change_reason" placeholder="Explica el cambio..." invisible="version == '1.0'" readonly="state != 'upload'"/>
+                            <field name="change_reason" invisible="version == '1.0'" readonly="state != 'upload'"/>
                             <field name="source_document_id" invisible="not source_document_id"/>
                             <field name="is_owner" invisible="1"/>
                         </group>
                     </group>
 
                     <notebook>
-      		        <page string="Descripción">
+                        <page string="Descripción">
                             <div class="mb-2">
-                                <button name="action_generate_ai_help" 
-                                        string="✨ Generar con IA" 
-                                        type="object" 
-                                        class="btn-primary btn-sm"
-                                        help="Genera una descripción automática y etiquetas basadas en el título."/>
+                                <button name="action_generate_ai_help" string="✨ Generar con IA" type="object" class="btn-primary btn-sm"/>
                             </div>
-                            <field name="description" placeholder="Escribe aquí o usa el botón 'Generar con IA' para autocompletar..."/>
+                            <field name="description" placeholder="Escribe aquí o usa el botón IA..."/>
                         </page>
                         <page string="Archivos">
                             <group>
                                 <group string="Editable / Fuente">
                                     <field name="editable_filename" invisible="1"/>
                                     <field name="editable_file" filename="editable_filename" widget="binary"/>
-                                    <div class="text-muted small">Sube aquí tu Word, Excel o <b>CSV</b>.</div>
                                 </group>
                                 <group string="Final (PDF/Video)">
                                     <field name="pdf_filename" invisible="1"/>
-                                    <field name="pdf_file" filename="pdf_filename" widget="binary" string="Subir Aquí"/>
+                                    <field name="pdf_file" filename="pdf_filename" widget="binary"/>
                                 </group>
                             </group>
                         </page>
-
                         <page string="Firmas" invisible="document_scope == 'external'">
                             <group>
                                 <field name="reviewer_ids" widget="many2many_tags" readonly="state != 'upload'"/>
@@ -193,7 +183,12 @@
                         </page>
                     </notebook>
                 </sheet>
-                <div class="oe_chatter" groups="base.group_no_one"><field name="message_follower_ids"/><field name="activity_ids"/><field name="message_ids"/></div>
+
+                <div class="oe_chatter" groups="base.group_no_one">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
             </form>
         </field>
     </record>
@@ -203,13 +198,7 @@
         <field name="model">document.control</field>
         <field name="arch" type="xml">
             <kanban default_group_by="state" quick_create="false" records_draggable="false" sample="1">
-                <field name="state"/>
-                <field name="code"/>
-                <field name="name"/>
-                <field name="version"/>
-                <field name="owner_id"/>
-                <field name="activity_ids"/>
-                <field name="area_id"/>
+                <field name="state"/><field name="code"/><field name="name"/><field name="version"/><field name="owner_id"/><field name="activity_ids"/><field name="area_id"/>
                 <templates>
                     <t t-name="card">
                         <div class="d-flex justify-content-between align-items-center mb-2">
@@ -217,30 +206,11 @@
                                 <span t-if="record.code.value != 'Borrador'" class="text-primary me-2">[<field name="code"/>]</span>
                                 <field name="name"/>
                             </strong>
-                            <div class="o_dropdown_kanban dropdown">
-                                <a class="dropdown-toggle o-no-caret btn" role="button" data-toggle="dropdown" href="#" aria-label="Dropdown menu" title="Dropdown menu">
-                                    <i class="fa fa-ellipsis-v"/>
-                                </a>
-                                <div class="dropdown-menu" role="menu">
-                                    <a type="edit" class="dropdown-item">Editar</a>
-                                    <a type="delete" class="dropdown-item">Eliminar</a>
-                                </div>
-                            </div>
                         </div>
-                        <div class="flex-grow-1 text-muted">
-                            <div class="mb-1">
-                                <span>v<field name="version"/></span>
-                                <span class="mx-1">-</span>
-                                <field name="area_id"/>
-                            </div>
-                        </div>
+                        <div class="text-muted">v<field name="version"/> - <field name="area_id"/></div>
                         <div class="d-flex justify-content-between align-items-center mt-3 pt-2 border-top">
-                            <div class="o_kanban_inline_block">
-                                <field name="activity_ids" widget="kanban_activity"/>
-                            </div>
-                            <div class="o_kanban_inline_block">
-                                <field name="owner_id" widget="many2one_avatar_user"/>
-                            </div>
+                            <field name="activity_ids" widget="kanban_activity"/>
+                            <field name="owner_id" widget="many2one_avatar_user"/>
                         </div>
                     </t>
                 </templates>
@@ -256,20 +226,16 @@
                 <div class="o_form_view_container" style="padding:0; margin:0;">
                     <field name="preview_html" widget="html" options="{'style-inline': true}" nolabel="1"/>
                 </div>
-<footer></footer>
             </form>
         </field>
     </record>
-
 
     <record id="view_document_control_search" model="ir.ui.view">
         <field name="name">document.control.search</field>
         <field name="model">document.control</field>
         <field name="arch" type="xml">
             <search>
-                <field name="name"/>
-                <field name="code"/>
-                <field name="tag_ids"/>
+                <field name="name"/><field name="code"/><field name="tag_ids"/>
                 <filter string="Mis Docs" name="my_docs" domain="[('owner_id', '=', uid)]"/>
                 <filter string="Vigentes" name="active_docs" domain="[('state', '=', 'approved')]"/>
                 <searchpanel>
@@ -290,56 +256,33 @@
         <field name="name">Mi Escritorio de Trabajo</field>
         <field name="res_model">document.control</field>
         <field name="view_mode">kanban,list,form</field>
-        <field name="domain">[
-            '|', '|',
-            '&amp;', ('state', 'in', ['draft', 'upload']), ('owner_id', '=', uid),
-            '&amp;', ('state', '=', 'review'), ('reviewer_ids', 'in', [uid]),
-            '&amp;', ('state', '=', 'validate'), ('approver_ids', 'in', [uid])
-        ]</field>
+        <field name="domain">['|', '|', '&amp;', ('state', 'in', ['draft', 'upload']), ('owner_id', '=', uid), '&amp;', ('state', '=', 'review'), ('reviewer_ids', 'in', [uid]), '&amp;', ('state', '=', 'validate'), ('approver_ids', 'in', [uid])]</field>
         <field name="context">{'search_default_group_by_state': 1}</field>
     </record>
-
 
     <record id="view_document_repository_list" model="ir.ui.view">
         <field name="name">document.repository.list</field>
         <field name="model">document.control</field>
         <field name="arch" type="xml">
             <list create="0" delete="0" edit="0" decoration-muted="state == 'obsolete'">
-                <field name="code" optional="show"/>
-                <field name="name"/>
-                <field name="version"/>
-                <field name="issue_date"/>
-                <field name="pdf_filename" column_invisible="True"/>
-                <field name="editable_filename" column_invisible="True"/>
+                <field name="code" optional="show"/><field name="name"/><field name="version"/><field name="issue_date"/>
+                <field name="pdf_filename" column_invisible="True"/><field name="editable_filename" column_invisible="True"/>
                 
-                <button name="action_open_preview_popup" 
-                        type="object" 
-                        string=" Ver" 
-                        icon="fa-eye" 
-                        class="btn-info" 
-                        invisible="not pdf_filename and not editable_filename"/>
-
+                <button name="action_open_preview_popup" type="object" string=" Ver" icon="fa-eye" class="btn-info" invisible="not pdf_filename and not editable_filename"/>
                 <field name="pdf_file" filename="pdf_filename" widget="binary" string=" " nolabel="1"/>
                 
-                <button name="%(custom_document_control.action_report_document_certificate)d" 
-                        type="action" 
-                        string="Certificado" 
-                        icon="fa-certificate"
-                        class="btn-secondary"/>
+                <button name="action_view_certificate" type="object" string="Certificado" icon="fa-certificate" class="btn-secondary"/>
 
                 <field name="folder_id" optional="hide"/>
                 <field name="state" widget="badge" decoration-success="state == 'approved'"/>
             </list>
         </field>
     </record>
-
     <record id="action_document_repository" model="ir.actions.act_window">
         <field name="name">Repositorio Maestro</field>
         <field name="res_model">document.control</field>
         <field name="view_mode">list,form</field>
         <field name="domain">[('state', '=', 'approved')]</field>
         <field name="view_id" ref="view_document_repository_list"/>
-        <field name="context">{}</field>
     </record>
-
 </odoo>

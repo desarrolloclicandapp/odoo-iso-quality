@@ -1,0 +1,272 @@
+# -*- coding: utf-8 -*-
+from odoo import models, fields, api, _
+from odoo.exceptions import ValidationError
+import base64
+import io
+import csv
+import openai
+import html
+import re
+# ==========================================
+# 1. MODELOS DE CONFIGURACIÓN
+# ==========================================
+
+class DocumentArea(models.Model):
+    _name = 'document.area'
+    _description = 'Áreas de la Empresa'
+    name = fields.Char('Nombre del Área', required=True)
+    code = fields.Char('Código (Abreviatura)', required=True, size=3, help="Ej: MKT, RRH")
+    _sql_constraints = [('code_uniq', 'unique(code)', '¡El código de área debe ser único!')]
+
+class DocumentCategory(models.Model):
+    _name = 'document.category'
+    _description = 'Categorías de Documentos'
+    name = fields.Char('Nombre Categoría', required=True)
+    code = fields.Char('Código', required=True, size=2, help="Ej: 01, AD, OP")
+
+class DocumentType(models.Model):
+    _name = 'document.type'
+    _description = 'Tipos de Documento'
+    name = fields.Char('Tipo de Documento', required=True)
+    code = fields.Char('Código', required=True, size=2, help="Ej: PR, MN, PL")
+
+class DocumentTag(models.Model):
+    _name = 'document.tag'
+    _description = 'Etiquetas de Documentos'
+    name = fields.Char('Nombre', required=True)
+    color = fields.Integer('Color')
+
+# ==========================================
+# 2. MODELO DE CARPETAS
+# ==========================================
+
+class DocumentFolder(models.Model):
+    _name = 'document.folder'
+    _description = 'Carpetas'
+    _parent_store = True
+    _rec_name = 'complete_name'
+    name = fields.Char(required=True)
+    parent_id = fields.Many2one('document.folder', ondelete='cascade', index=True)
+    parent_path = fields.Char(index=True, unaccent=False)
+    complete_name = fields.Char(compute='_compute_complete_name', store=True)
+    child_ids = fields.One2many('document.folder', 'parent_id')
+    
+    @api.depends('name', 'parent_id.complete_name')
+    def _compute_complete_name(self):
+        for f in self:
+            f.complete_name = '%s / %s' % (f.parent_id.complete_name, f.name) if f.parent_id else f.name
+
+# ==========================================
+# 3. MODELO PRINCIPAL (DOCUMENT CONTROL)
+# ==========================================
+
+class DocumentControl(models.Model):
+    _name = 'document.control'
+    _description = 'Control de Documentos'
+    _inherit = ['mail.thread', 'mail.activity.mixin']
+    _order = 'code desc, version desc'
+
+    # --- IDENTIFICACIÓN ---
+    name = fields.Char(string='Título', required=True, tracking=True)
+    code = fields.Char(string='Código', default='Borrador', readonly=True, index=True)
+    
+    # Campos Dinámicos
+    area_id = fields.Many2one('document.area', string='Área', required=True, tracking=True)
+    category_id = fields.Many2one('document.category', string='Categoría', tracking=True)
+    type_id = fields.Many2one('document.type', string='Tipo Doc.', required=True, tracking=True)
+    tag_ids = fields.Many2many('document.tag', string='Etiquetas')
+    description = fields.Text(string='Descripción / Resumen')
+    
+    folder_id = fields.Many2one('document.folder', string='Carpeta', required=True, tracking=True)
+    document_scope = fields.Selection([('internal', 'Interno ISO'),('external', 'Externo')], default='internal', required=True)
+    sequence_number = fields.Integer(string='Secuencial', readonly=True)
+
+    # --- VERSIONADO ---
+    version = fields.Char(default='1.0', required=True, tracking=True)
+    change_reason = fields.Text(string='Motivo del Cambio', tracking=True)
+    source_document_id = fields.Many2one('document.control', readonly=True)
+    active_revision_id = fields.Many2one('document.control', readonly=True)
+    revision_type = fields.Selection([('major', 'Mayor'), ('minor', 'Menor')])
+    
+    state = fields.Selection([
+        ('draft', 'Borrador'), ('upload', 'Carga'), ('review', 'En Revisión'),
+        ('validate', 'En Aprobación'), ('approved', 'Publicado'),
+        ('rejected', 'Rechazado'), ('obsolete', 'Obsoleto')
+    ], default='draft', tracking=True)
+
+    # --- ARCHIVOS ---
+    editable_file = fields.Binary(string='Archivo Editable/Fuente', attachment=True)
+    editable_filename = fields.Char(string='Nombre Editable')
+    pdf_file = fields.Binary(string='Archivo Final (PDF/Video)', attachment=True)
+    pdf_filename = fields.Char(string='Nombre Final')
+    
+    # Visor HTML
+    preview_html = fields.Html(compute='_compute_preview_html', string='Visor', sanitize=False)
+
+    # --- RESPONSABLES ---
+    owner_id = fields.Many2one('res.users', default=lambda self: self.env.user, required=True)
+    reviewer_ids = fields.Many2many('res.users', 'doc_rev_rel', string='Revisores')
+    approver_ids = fields.Many2many('res.users', 'doc_app_rel', string='Aprobadores')
+    
+    reviewed_by_id = fields.Many2one('res.users', readonly=True)
+    review_date = fields.Datetime(readonly=True)
+    approved_by_id = fields.Many2one('res.users', readonly=True)
+    approval_date = fields.Datetime(readonly=True)
+    
+    issue_date = fields.Date(string='Fecha Emisión')
+    is_owner = fields.Boolean(compute='_compute_is_owner')
+
+    _sql_constraints = [('code_version_uniq', 'unique(code, version)', '¡Versión duplicada!')]
+
+    # ==========================================
+    # 4. LÓGICA COMPUTADA Y VALIDACIONES
+    # ==========================================
+
+    @api.constrains('reviewer_ids', 'approver_ids')
+    def _check_conflict_of_interest(self):
+        for record in self:
+            # Si el usuario es Manager o Admin, nos saltamos la regla
+            if self.env.user.has_group('custom_document_control.group_document_manager') or self.env.user.has_group('base.group_system'):
+                continue
+            # Regla: El Propietario NO puede ser Revisor ni Aprobador
+            if record.owner_id in record.reviewer_ids or record.owner_id in record.approver_ids:
+                raise ValidationError("⛔ CONFLICTO DE INTERESES:\nNo puedes ser Juez y Parte. El propietario no puede auto-aprobarse.")
+
+    @api.depends('owner_id')
+    def _compute_is_owner(self):
+        for record in self:
+            record.is_owner = record.env.user == record.owner_id
+
+    @api.depends('pdf_file', 'pdf_filename', 'editable_file', 'editable_filename')
+    def _compute_preview_html(self):
+        for record in self:
+            record.preview_html = False
+            content = ""
+            if record.pdf_file and record.pdf_filename:
+                file_url = f"/web/content/document.control/{record.id}/pdf_file"
+                fname = record.pdf_filename.lower()
+                if fname.endswith('.pdf'):
+                    content = f'<iframe src="{file_url}" width="100%" height="85vh" style="border:none;"></iframe>'
+                elif fname.endswith(('.mp4', '.webm')):
+                    content = f'<div style="text-align:center; height:85vh; background:black; display:flex; align-items:center; justify-content:center;"><video controls style="max-width:100%; max-height:100%;"><source src="{file_url}" type="video/mp4"></video></div>'
+                elif fname.endswith(('.jpg', '.png', '.jpeg', '.gif')):
+                    content = f'<div style="text-align:center; height:85vh; display:flex; align-items:center; justify-content:center; overflow:auto;"><img src="{file_url}" style="max-width:100%; max-height:100%;"/></div>'
+            elif record.editable_file and record.editable_filename:
+                fname = record.editable_filename.lower()
+                if fname.endswith('.csv'):
+                    try:
+                        csv_data = base64.b64decode(record.editable_file).decode('utf-8')
+                        f = io.StringIO(csv_data)
+                        reader = csv.reader(f, delimiter=',')
+                        table_html = '<div style="overflow:auto; max-height:85vh;"><table class="table table-bordered table-striped" style="background:white; margin:0;">'
+                        for i, row in enumerate(reader):
+                            tag = 'th' if i == 0 else 'td'
+                            table_html += '<tr>' + ''.join(f'<{tag} style="white-space:nowrap;">{cell}</{tag}>' for cell in row) + '</tr>'
+                        table_html += '</table></div>'
+                        content = table_html
+                    except Exception as e:
+                        content = f'<div class="alert alert-warning">Error al leer CSV: {str(e)}</div>'
+            if content:
+                record.preview_html = content
+            else:
+                record.preview_html = """<div class="alert alert-info text-center" style="margin-top:20px;"><h4>📂 Vista previa no disponible</h4><p>Descarga el archivo para verlo.</p></div>"""
+
+    def _close_activity_for_current_user(self, feedback):
+        domain = [('res_id', '=', self.id), ('res_model', '=', 'document.control'), ('user_id', '=', self.env.user.id)]
+        self.env['mail.activity'].search(domain).action_feedback(feedback=feedback)
+
+    def action_open_preview_popup(self):
+        self.ensure_one()
+        return {
+            'name': 'Vista Previa: ' + self.name,
+            'type': 'ir.actions.act_window',
+            'res_model': 'document.control',
+            'res_id': self.id,
+            'view_mode': 'form',
+            'view_id': self.env.ref('custom_document_control.view_document_preview_popup').id,
+            'target': 'new',
+            'flags': {'mode': 'readonly'},
+        }
+
+    # ---------------------------------------------------------
+    # 🤖 IA GENERATIVA (SOLO DESCRIPCIÓN)
+    # ---------------------------------------------------------
+    def action_generate_ai_help(self):
+        self.ensure_one()
+        api_key = self.env['ir.config_parameter'].sudo().get_param('openai_api_key')
+        if not api_key:
+            raise ValidationError("⚠️ Falta la API Key de OpenAI en Ajustes.")
+        
+        info_doc = f"Título: {self.name}. Área: {self.area_id.name}. Tipo: {self.type_id.name}."
+        prompt_system = "Eres un experto en Gestión de Calidad ISO 9001."
+        prompt_user = (f"Basado en: '{info_doc}', escribe una 'Descripción/Resumen' profesional, técnica y corta "
+                       "(máximo 2 líneas) que explique el propósito. Solo texto.")
+        
+        try:
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": prompt_user}],
+                temperature=0.7,
+            )
+            content = response.choices[0].message.content.strip().replace("Descripción:", "").replace('"', '').strip()
+            self.description = content
+        except Exception as e:
+            raise ValidationError(f"Error IA: {str(e)}")
+
+    # ---------------------------------------------------------
+    # 🖨️ REPORTES Y PDF
+    # ---------------------------------------------------------
+    def action_view_certificate(self):
+        """ Abre el PDF en pestaña nueva """
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_url',
+            'url': f'/report/pdf/custom_document_control.report_document_certificate_template/{self.id}',
+            'target': 'new',
+        }
+
+    def get_full_audit_trail(self):
+        """ Historial completo LIMPIO para el reporte """
+        trail = []
+        all_docs = self
+        current = self
+        
+        # 1. Buscar ancestros
+        while current.source_document_id:
+            current = current.source_document_id
+            all_docs += current
+        
+        # 2. Recorrer historial
+        for doc in all_docs:
+            messages = self.env['mail.message'].search([
+                ('model', '=', 'document.control'), ('res_id', '=', doc.id),
+                ('message_type', 'in', ['comment', 'notification']), ('body', '!=', '')
+            ], order='date desc')
+
+            for msg in messages:
+                # PASO A: Decodificar HTML entities (&lt; -> <)
+                raw_text = html.unescape(msg.body or '')
+                
+                # PASO B: Quitar etiquetas HTML (<p>, <br>, <b>)
+                clean_text = re.sub('<[^<]+?>', ' ', raw_text) # Reemplazar tags por espacio
+                
+                # PASO C: Limpieza de espacios dobles y saltos extraños
+                clean_text = " ".join(clean_text.split())
+                
+                # PASO D: Filtrar mensajes basura del sistema (Opcional pero recomendado)
+                # Si el mensaje empieza con "Actividades pendientes", lo ignoramos para que no ensucie
+                if "Actividades pendientes" in clean_text:
+                    continue
+
+                if clean_text:
+                    trail.append({
+                        'date': msg.date, 
+                        'version': doc.version,
+                        'user': msg.author_id.name or 'Sistema',
+                        'action': clean_text,
+                        'type': 'reject' if 'Rechazado' in clean_text or 'Devuelto' in clean_text else 'info'
+                    })
+        
+        return sorted(trail, key=lambda k: k['date'], reverse=True)
+

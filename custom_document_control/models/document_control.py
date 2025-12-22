@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 from odoo import models, fields, api, _
-from odoo.exceptions import ValidationError
+from odoo.exceptions import ValidationError, UserError
 import base64
 import io
 import csv
 import openai
 import re
+import html  # Necesario para limpiar el historial
+
 # ==========================================
 # 1. MODELOS DE CONFIGURACIÓN
 # ==========================================
@@ -118,77 +120,17 @@ class DocumentControl(models.Model):
     _sql_constraints = [('code_version_uniq', 'unique(code, version)', '¡Versión duplicada!')]
 
     # ==========================================
-    # 4. LÓGICA COMPUTADA
+    # 4. LÓGICA COMPUTADA Y VALIDACIONES
     # ==========================================
-    def action_generate_ai_help(self):
-        self.ensure_one()
-        
-        # 1. Obtenemos la API Key desde la configuración del sistema
-        api_key = self.env['ir.config_parameter'].sudo().get_param('openai_api_key')
-        if not api_key:
-            raise UserError("⚠️ Falta la API Key de OpenAI.\nVe a Ajustes -> Técnico -> Parámetros del Sistema y crea uno llamado 'openai_api_key'.")
 
-        # 2. Preparamos el Prompt (la instrucción para la IA)
-        info_doc = f"Título: {self.name}. Área: {self.area_id.name}. Tipo: {self.type_id.name}."
-        
-        prompt_system = "Eres un experto en Gestión de Calidad ISO 9001. Tu trabajo es ayudar a clasificar documentos."
-        prompt_user = (
-            f"Basado en esta información: '{info_doc}', realiza dos tareas:\n"
-            "1. Escribe una 'Descripción/Resumen' profesional, técnica y corta (máximo 2 líneas) que explique el propósito probable de este documento.\n"
-            "2. Sugiere 3 palabras clave (etiquetas) separadas por comas.\n\n"
-            "Formato de respuesta obligatorio:\n"
-            "DESCRIPCION: [Tu descripción aquí]\n"
-            "ETIQUETAS: [Tag1, Tag2, Tag3]"
-        )
+    @api.constrains('reviewer_ids', 'approver_ids')
+    def _check_conflict_of_interest(self):
+        for record in self:
+            if self.env.user.has_group('custom_document_control.group_document_manager') or self.env.user.has_group('base.group_system'):
+                continue
+            if record.owner_id in record.reviewer_ids or record.owner_id in record.approver_ids:
+                raise ValidationError("⛔ CONFLICTO DE INTERESES:\nNo puedes ser Juez y Parte. El propietario no puede auto-aprobarse.")
 
-        try:
-            # 3. Llamamos a la API
-            client = openai.OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo", # Puedes usar "gpt-4" si quieres más inteligencia (es un poco más caro)
-                messages=[
-                    {"role": "system", "content": prompt_system},
-                    {"role": "user", "content": prompt_user}
-                ],
-                temperature=0.7,
-            )
-            
-            # 4. Procesamos la respuesta
-            content = response.choices[0].message.content
-            
-            # Separamos la descripción de las etiquetas
-            desc_text = ""
-            tags_text = ""
-            
-            for line in content.split('\n'):
-                if "DESCRIPCION:" in line:
-                    desc_text = line.replace("DESCRIPCION:", "").strip()
-                elif "ETIQUETAS:" in line:
-                    tags_text = line.replace("ETIQUETAS:", "").strip()
-
-            # 5. Guardamos la Descripción
-            if desc_text:
-                self.description = desc_text
-
-            # 6. Guardamos las Etiquetas (Creándolas si no existen)
-            if tags_text:
-                tag_list = [t.strip() for t in tags_text.split(',')]
-                new_tag_ids = []
-                for tag_name in tag_list:
-                    # Buscamos si la etiqueta ya existe (insensible a mayúsculas)
-                    existing_tag = self.env['document.tag'].search([('name', '=ilike', tag_name)], limit=1)
-                    if existing_tag:
-                        new_tag_ids.append(existing_tag.id)
-                    else:
-                        # Si no existe, la creamos con un color al azar (ej: 1)
-                        new_tag = self.env['document.tag'].create({'name': tag_name, 'color': 1})
-                        new_tag_ids.append(new_tag.id)
-                
-                # Añadimos las nuevas etiquetas a las que ya tuviera
-                self.tag_ids = [(4, tid) for tid in new_tag_ids]
-                
-        except Exception as e:
-            raise UserError(f"Error al conectar con la IA: {str(e)}")
     @api.depends('owner_id')
     def _compute_is_owner(self):
         for record in self:
@@ -196,24 +138,18 @@ class DocumentControl(models.Model):
 
     @api.depends('pdf_file', 'pdf_filename', 'editable_file', 'editable_filename')
     def _compute_preview_html(self):
-        """ Genera el HTML para el visor (PDF, Video, Imagen o CSV) """
         for record in self:
             record.preview_html = False
             content = ""
-            
-            # A. Archivos Multimedia/PDF
             if record.pdf_file and record.pdf_filename:
                 file_url = f"/web/content/document.control/{record.id}/pdf_file"
                 fname = record.pdf_filename.lower()
-
                 if fname.endswith('.pdf'):
                     content = f'<iframe src="{file_url}" width="100%" height="85vh" style="border:none;"></iframe>'
                 elif fname.endswith(('.mp4', '.webm')):
                     content = f'<div style="text-align:center; height:85vh; background:black; display:flex; align-items:center; justify-content:center;"><video controls style="max-width:100%; max-height:100%;"><source src="{file_url}" type="video/mp4"></video></div>'
                 elif fname.endswith(('.jpg', '.png', '.jpeg', '.gif')):
                     content = f'<div style="text-align:center; height:85vh; display:flex; align-items:center; justify-content:center; overflow:auto;"><img src="{file_url}" style="max-width:100%; max-height:100%;"/></div>'
-
-            # B. Archivos CSV (Tabla HTML)
             elif record.editable_file and record.editable_filename:
                 fname = record.editable_filename.lower()
                 if fname.endswith('.csv'):
@@ -229,61 +165,16 @@ class DocumentControl(models.Model):
                         content = table_html
                     except Exception as e:
                         content = f'<div class="alert alert-warning">Error al leer CSV: {str(e)}</div>'
-
             if content:
                 record.preview_html = content
             else:
-                record.preview_html = """
-                    <div class="alert alert-info text-center" style="margin-top:20px;">
-                        <h4>📂 Vista previa no disponible</h4>
-                        <p>Descarga el archivo para verlo.</p>
-                    </div>
-                """
+                record.preview_html = """<div class="alert alert-info text-center" style="margin-top:20px;"><h4>📂 Vista previa no disponible</h4><p>Descarga el archivo para verlo.</p></div>"""
 
     def _close_activity_for_current_user(self, feedback):
         domain = [('res_id', '=', self.id), ('res_model', '=', 'document.control'), ('user_id', '=', self.env.user.id)]
         self.env['mail.activity'].search(domain).action_feedback(feedback=feedback)
 
-    def get_full_audit_trail(self):
-        """ Recolecta el historial completo de esta versión y las anteriores """
-        trail = []
-        
-        # 1. Recopilar todas las versiones (La actual + los ancestros)
-        all_docs = self
-        current = self
-        while current.source_document_id:
-            current = current.source_document_id
-            all_docs += current
-        
-        # 2. Iterar sobre cada documento para sacar sus mensajes
-        for doc in all_docs:
-            # Buscamos mensajes de tipo comentario (notas de rechazo) o notificaciones de sistema (cambios de estado)
-            messages = self.env['mail.message'].search([
-                ('model', '=', 'document.control'),
-                ('res_id', '=', doc.id),
-                ('message_type', 'in', ['comment', 'notification']),
-                ('body', '!=', '') # Que no estén vacíos
-            ], order='date desc')
-
-            for msg in messages:
-                # Limpieza básica de HTML (Quitar <p>, <br>, etc para el PDF)
-                clean_body = re.sub('<[^<]+?>', '', msg.body or '')
-                
-                # Solo agregamos si hay texto relevante
-                if clean_body:
-                    trail.append({
-                        'date': msg.date,
-                        'version': doc.version,
-                        'user': msg.author_id.name or 'Sistema',
-                        'action': clean_body,
-                        'type': 'reject' if 'Rechazado' in clean_body else 'info'
-                    })
-        
-        # 3. Ordenar todo por fecha (del más reciente al más antiguo)
-        return sorted(trail, key=lambda k: k['date'], reverse=True)
-
     def action_open_preview_popup(self):
-        """ Abre el Pop-up de Vista Previa """
         self.ensure_one()
         return {
             'name': 'Vista Previa: ' + self.name,
@@ -296,31 +187,139 @@ class DocumentControl(models.Model):
             'flags': {'mode': 'readonly'},
         }
 
-    # ==========================================
-    # 5. FLUJO Y ACCIONES
-    # ==========================================
+    # ---------------------------------------------------------
+    # 🤖 IA GENERATIVA (SOLO DESCRIPCIÓN)
+    # ---------------------------------------------------------
+    def action_generate_ai_help(self):
+        self.ensure_one()
+        api_key = self.env['ir.config_parameter'].sudo().get_param('openai_api_key')
+        if not api_key:
+            raise ValidationError("⚠️ Falta la API Key de OpenAI en Ajustes.")
+        
+        info_doc = f"Título: {self.name}. Área: {self.area_id.name}. Tipo: {self.type_id.name}."
+        prompt_system = "Eres un experto en Gestión de Calidad ISO 9001."
+        prompt_user = (f"Basado en: '{info_doc}', escribe una 'Descripción/Resumen' profesional, técnica y corta "
+                       "(máximo 2 líneas) que explique el propósito. Solo texto.")
+        
+        try:
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "system", "content": prompt_system}, {"role": "user", "content": prompt_user}],
+                temperature=0.7,
+            )
+            content = response.choices[0].message.content.strip().replace("Descripción:", "").replace('"', '').strip()
+            self.description = content
+        except Exception as e:
+            raise ValidationError(f"Error IA: {str(e)}")
 
+    # ---------------------------------------------------------
+    # 🖨️ REPORTES, PDF Y GENERACIÓN ESTÁTICA
+    # ---------------------------------------------------------
+    
+    def _generate_and_save_certificate(self):
+        """ Genera el PDF de forma SEGURA y lo guarda """
+        self.ensure_one()
+        
+        filename = f"Certificado - {self.code} - v{self.version}.pdf"
+        
+        # 1. Buscar si ya existe
+        existing = self.env['ir.attachment'].search([
+            ('res_model', '=', 'document.control'),
+            ('res_id', '=', self.id),
+            ('name', '=', filename)
+        ], limit=1)
+        if existing: return existing
+
+        # 2. Buscar reporte PROTEGIENDO el error
+        report_ref = 'custom_document_control.action_report_document_certificate'
+        report_template = self.env.ref(report_ref, raise_if_not_found=False)
+
+        # Si no existe, NO rompemos el sistema, solo avisamos en el log o retornamos False
+        if not report_template:
+            # Esto evita el "Record missing"
+            print(f"⚠️ AVISO: No se encontró el reporte {report_ref}. No se generará el adjunto automático.")
+            return False
+
+        # 3. Generar
+        try:
+            pdf_content, _ = report_template._render_qweb_pdf(self.id)
+            attachment = self.env['ir.attachment'].create({
+                'name': filename, 'type': 'binary', 'datas': base64.b64encode(pdf_content),
+                'res_model': 'document.control', 'res_id': self.id, 'mimetype': 'application/pdf'
+            })
+            return attachment
+        except Exception as e:
+            # Si falla renderizar, tampoco rompemos el flujo de aprobación
+            print(f"⚠️ Error generando PDF: {str(e)}")
+            return False
+
+    def action_view_certificate(self):
+        self.ensure_one()
+        filename = f"Certificado - {self.code} - v{self.version}.pdf"
+        attachment = self.env['ir.attachment'].search([('res_model', '=', 'document.control'), ('res_id', '=', self.id), ('name', '=', filename)], limit=1)
+
+        if not attachment:
+            attachment = self._generate_and_save_certificate()
+
+        if attachment:
+            return {'type': 'ir.actions.act_url', 'url': f'/web/content/{attachment.id}?download=false', 'target': 'new'}
+        else:
+            # Fallback si falla la generación: intentamos abrir el reporte dinámico
+            return {
+                'type': 'ir.actions.report',
+                'report_name': 'custom_document_control.report_document_certificate_template',
+                'report_type': 'qweb-pdf',
+                'res_model': 'document.control',
+                'res_ids': [self.id],
+            }
+
+    def get_full_audit_trail(self):
+        """ Historial LIMPIO (sin HTML basura) """
+        trail = []
+        all_docs = self
+        current = self
+        while current.source_document_id:
+            current = current.source_document_id
+            all_docs += current
+        
+        for doc in all_docs:
+            messages = self.env['mail.message'].search([
+                ('model', '=', 'document.control'), ('res_id', '=', doc.id),
+                ('message_type', 'in', ['comment', 'notification']), ('body', '!=', '')
+            ], order='date desc')
+            for msg in messages:
+                # LIMPIEZA PROFUNDA DE HTML
+                raw_text = html.unescape(msg.body or '')
+                clean_text = re.sub('<[^<]+?>', ' ', raw_text)
+                clean_text = " ".join(clean_text.split())
+                
+                if "Actividades pendientes" in clean_text: continue
+
+                if clean_text:
+                    trail.append({
+                        'date': msg.date, 'version': doc.version,
+                        'user': msg.author_id.name or 'Sistema',
+                        'action': clean_text,
+                        'type': 'reject' if 'Rechazado' in clean_text or 'Devuelto' in clean_text else 'info'
+                    })
+        return sorted(trail, key=lambda k: k['date'], reverse=True)
+
+    # ---------------------------------------------------------
+    # FLUJO Y ESTADOS
+    # ---------------------------------------------------------
     def action_start_flow(self):
-        """ Genera código: AREA-CATEGORIA-TIPO-SEQ """
         self.ensure_one()
         if self.code == 'Borrador':
             area = self.area_id.code
             cat = self.category_id.code if self.category_id else 'GEN'
             tipo = self.type_id.code
-            
             prefix = f"{area}-{cat}-{tipo}-"
             domain = [('code', 'like', prefix + '%')]
             last = self.search(domain, order='code desc', limit=1)
-            
-            if last and last.code != 'Borrador':
-                try: new_seq = int(last.code.split('-')[-1]) + 1
-                except: new_seq = 1
-            else:
-                new_seq = 1
-                
+            new_seq = int(last.code.split('-')[-1]) + 1 if (last and last.code != 'Borrador') else 1
             self.code = f"{prefix}{new_seq:03d}"
             self.sequence_number = new_seq
-            
         self.state = 'upload'
         self._close_activity_for_current_user("Carga iniciada.")
 
@@ -328,6 +327,7 @@ class DocumentControl(models.Model):
         self.ensure_one()
         if self.document_scope != 'external': raise ValidationError("Solo para Externos.")
         self.write({'state': 'approved', 'issue_date': fields.Date.today(), 'approved_by_id': self.env.user.id, 'approval_date': fields.Datetime.now()})
+        self._generate_and_save_certificate()
         self.message_post(body="🚀 Publicado.")
         self._close_activity_for_current_user("Publicado.")
 
@@ -335,9 +335,7 @@ class DocumentControl(models.Model):
         self.ensure_one()
         if self.document_scope == 'internal' and self.version != '1.0' and not self.change_reason:
             raise ValidationError("Falta Motivo del Cambio.")
-        
         self._close_activity_for_current_user("Enviado a revisión.")
-        
         if self.revision_type == 'minor':
             if not self.approver_ids: raise ValidationError("Asigna Aprobadores.")
             self.state = 'validate'
@@ -353,10 +351,8 @@ class DocumentControl(models.Model):
         self.ensure_one()
         if self.env.user not in self.reviewer_ids and not self.env.user.has_group('base.group_system'):
             raise ValidationError("⛔ No tienes permiso. Solo los Revisores pueden dar el Visto Bueno.")
-
         self.write({'state': 'validate', 'reviewed_by_id': self.env.user.id, 'review_date': fields.Datetime.now()})
         self._close_activity_for_current_user("Visto Bueno.")
-        
         for u in self.approver_ids:
             self.activity_schedule('mail.mail_activity_data_todo', user_id=u.id, note='Requiere Aprobación Final')
 
@@ -364,23 +360,21 @@ class DocumentControl(models.Model):
         self.ensure_one()
         if self.env.user not in self.approver_ids and not self.env.user.has_group('base.group_system'):
             raise ValidationError("⛔ No tienes permiso. Solo los Aprobadores pueden firmar.")
-
         self.write({'state': 'approved', 'issue_date': fields.Date.today(), 'approved_by_id': self.env.user.id, 'approval_date': fields.Datetime.now()})
-        self._close_activity_for_current_user("Aprobado.")
         
+        # Intentamos generar certificado, pero si falla NO ROMPEMOS la aprobación
+        self._generate_and_save_certificate()
+        
+        self._close_activity_for_current_user("Aprobado.")
         if self.source_document_id:
             self.source_document_id.write({'state': 'obsolete', 'active_revision_id': False})
 
     def action_reject(self):
-        """ Abre el Wizard de Rechazo """
         self.ensure_one()
         return {
-            'name': 'Indicar Motivo de Rechazo',
-            'type': 'ir.actions.act_window',
-            'res_model': 'document.reject.wizard',
-            'view_mode': 'form',
-            'target': 'new',
-            'context': {'default_document_id': self.id} # Le pasamos el ID del documento al wizard
+            'name': 'Indicar Motivo de Rechazo', 'type': 'ir.actions.act_window',
+            'res_model': 'document.reject.wizard', 'view_mode': 'form',
+            'target': 'new', 'context': {'default_document_id': self.id}
         }
 
     def _create_revision(self, rev_type):
