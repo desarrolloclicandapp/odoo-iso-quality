@@ -1,15 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <menuitem id="menu_document_control_root"
-              name="Gestor de archivos"
-              web_icon="custom_document_control,static/description/icon.png"
-              sequence="10"/>
-
-    <menuitem id="menu_my_dashboard"
-              name="Tareas"
-              parent="menu_document_control_root"
-              action="action_my_pending_tasks"
-              sequence="1"/>
+    <menuitem id="menu_document_control_root" name="Gestión ISO" web_icon="custom_document_control,static/description/icon.png"/>
+    <menuitem id="menu_document_main" name="Gestión" parent="menu_document_control_root" sequence="1"/>
+    <menuitem id="menu_my_pending_tasks" name="Mis Pendientes" parent="menu_document_main" action="action_my_pending_tasks" sequence="1"/>
+    <menuitem id="menu_doc_control_list" name="Todos los Documentos" parent="menu_document_main" action="action_document_control" sequence="2"/>
 
     <menuitem id="menu_all_documents"
               name="Documentos"
@@ -23,14 +17,10 @@
               action="action_document_repository"
               sequence="20"/>
 
-    <menuitem id="menu_configuration"
-              name="Configuración"
-              parent="menu_document_control_root"
-              sequence="100"
-              groups="group_document_manager"/>
-	<menuitem id="menu_conf_areas" name="Áreas" parent="menu_configuration" action="action_document_area" sequence="1"/>
-        <menuitem id="menu_conf_cats" name="Categorías" parent="menu_configuration" action="action_document_cat" sequence="2"/>
-        <menuitem id="menu_conf_types" name="Tipos de Doc." parent="menu_configuration" action="action_document_type" sequence="3"/>
-        <menuitem id="menu_conf_folders" name="Carpetas" parent="menu_configuration" action="action_document_folder" sequence="4"/>
-	<menuitem id="menu_conf_tags" name="Etiquetas" parent="menu_configuration" action="action_document_tag" sequence="5"/>
+    <menuitem id="menu_configuration" name="Configuración" parent="menu_document_control_root" sequence="100" groups="group_document_manager"/>
+    
+    <menuitem id="menu_conf_areas" name="Áreas" parent="menu_configuration" action="action_document_area" sequence="1"/>
+    <menuitem id="menu_conf_types" name="Tipos de Documento" parent="menu_configuration" action="action_document_type" sequence="2"/>
+    <menuitem id="menu_conf_folders" name="Estructura de Carpetas" parent="menu_configuration" action="action_document_folder" sequence="3"/>
+    <menuitem id="menu_conf_tags" name="Etiquetas" parent="menu_configuration" action="action_document_tag" sequence="4"/>
 </odoo>

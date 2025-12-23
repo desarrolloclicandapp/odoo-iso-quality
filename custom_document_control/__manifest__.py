@@ -12,6 +12,7 @@
     'data': [
         'security/security_groups.xml',
         'security/ir.model.access.csv',
+	'security/folder_security.xml',
         'data/ir_sequence_data.xml',
 	'wizard/document_reject_wizard_views.xml',
 	'views/report_certificate.xml',
