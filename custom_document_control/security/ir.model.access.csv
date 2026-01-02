@@ -1,4 +1,6 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_document_folder_access_user,document.folder.access,model_document_folder_access,base.group_user,1,0,0,0
+access_document_folder_access_admin,document.folder.access,model_document_folder_access,base.group_system,1,1,1,1
 access_doc_folder,access_doc_folder,model_document_folder,base.group_user,1,1,1,1
 access_doc_control,access_doc_control,model_document_control,base.group_user,1,1,1,1
 access_doc_area,access_doc_area,model_document_area,base.group_user,1,1,1,1
@@ -7,3 +9,5 @@ access_doc_type,access_doc_type,model_document_type,base.group_user,1,1,1,1
 access_doc_reject_wizard,access_doc_reject_wizard,model_document_reject_wizard,base.group_user,1,1,1,1
 access_doc_tag_user,access_doc_tag_user,model_document_tag,base.group_user,1,0,0,0
 access_doc_tag_manager,access_doc_tag_manager,model_document_tag,base.group_system,1,1,1,1
+access_document_folder_admin,document.folder,model_document_folder,base.group_system,1,1,1,1
+access_document_folder_access_admin,document.folder.access,model_document_folder_access,base.group_system,1,1,1,1

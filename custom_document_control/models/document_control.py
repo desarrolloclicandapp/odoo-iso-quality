@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+#-*- coding: utf-8 -*-
 from odoo import models, fields, api, _
 from odoo.exceptions import ValidationError, UserError
 import base64
@@ -46,6 +46,16 @@ class DocumentTag(models.Model):
 # ==========================================
 # 2. CARPETAS (LÓGICA DE AYER: GRUPOS)
 # ==========================================
+class DocumentFolderAccess(models.Model):
+    _name = 'document.folder.access'
+    _description = 'Permisos de Carpeta'
+    folder_id = fields.Many2one('document.folder', string='Carpeta', required=True, ondelete='cascade')
+    user_id = fields.Many2one('res.users', string='Usuario', required=True, ondelete='cascade')
+    access_level = fields.Selection([
+        ('read', 'Solo Lectura'),
+        ('write', 'Lectura y Escritura')
+    ], string='Nivel', default='read', required=True)
+
 class DocumentFolder(models.Model):
     _name = 'document.folder'
     _description = 'Carpetas'
@@ -58,11 +68,10 @@ class DocumentFolder(models.Model):
     complete_name = fields.Char(compute='_compute_complete_name', store=True)
     child_ids = fields.One2many('document.folder', 'parent_id')
     
-    # SEGURIDAD DE AYER (Por Grupos)
+    # --- TUS CAMPOS DE SIEMPRE (No los toco) ---
+    access_ids = fields.One2many('document.folder.access', 'folder_id', string='Permisos')
     allowed_group_ids = fields.Many2many('res.groups', string='Grupos con Acceso')
-    # Campo Puente calculado (Vital para la regla de seguridad de ayer)
     access_user_ids = fields.Many2many('res.users', compute='_compute_access_user_ids', store=True)
-    
     @api.depends('name', 'parent_id.complete_name')
     def _compute_complete_name(self):
         for f in self:
@@ -76,8 +85,129 @@ class DocumentFolder(models.Model):
                 f.access_user_ids = users
             else:
                 f.access_user_ids = False
+    @api.onchange('parent_id')
+    def _onchange_parent_id(self):
+        """Si cambias el padre, copiamos sus permisos automáticamente"""
+        if self.parent_id:
+            # 1. Limpiamos la lista actual para no duplicar
+            self.access_ids = [(5, 0, 0)]
+            
+            # 2. Preparamos los permisos del padre para copiarlos
+            new_permissions = []
+            
+            # Copiar Usuarios Individuales
+            if self.parent_id.access_ids:
+                for perm in self.parent_id.access_ids:
+                    new_permissions.append((0, 0, {
+                        'user_id': perm.user_id.id,
+                        'access_level': perm.access_level
+                    }))
+            
+            # 3. Pegamos los permisos en la carpeta hija
+            self.access_ids = new_permissions
+            
+            # 4. Copiar también los Grupos (por si acaso usas grupos en el padre)
+            if self.parent_id.allowed_group_ids:
+                self.allowed_group_ids = self.parent_id.allowed_group_ids
+    def _get_parent_permissions(self, parent_id):
+        """Ayudante para extraer permisos del padre en formato de escritura"""
+        parent = self.browse(parent_id)
+        new_access = []
+        new_groups = []
+        
+        # 1. Copiar Usuarios
+        if parent.access_ids:
+            for perm in parent.access_ids:
+                new_access.append((0, 0, {
+                    'user_id': perm.user_id.id,
+                    'access_level': perm.access_level
+                }))
+        
+        # 2. Copiar Grupos
+        if parent.allowed_group_ids:
+            new_groups = [(6, 0, parent.allowed_group_ids.ids)]
+            
+        return new_access, new_groups
 
-# ==========================================
+    @api.model
+    def create(self, vals):
+        """Al crear, si tiene padre, heredamos sus permisos automáticamente"""
+        if vals.get('parent_id'):
+            # Obtenemos los permisos del padre elegido
+            p_access, p_groups = self._get_parent_permissions(vals['parent_id'])
+            
+            # Si no se definieron permisos manuales, ponemos los del padre
+            if p_access and not vals.get('access_ids'):
+                vals['access_ids'] = p_access
+            if p_groups and not vals.get('allowed_group_ids'):
+                vals['allowed_group_ids'] = p_groups
+                
+        return super(DocumentFolder, self).create(vals)
+
+    def write(self, vals):
+        """
+        1. Si cambiamos de padre -> Actualizamos nuestros permisos.
+        2. Si cambiamos nuestros permisos -> Actualizamos a nuestros hijos (Cascada).
+        """
+        # CASO 1: Cambiando de Padre
+        if 'parent_id' in vals:
+            # Si nos mueven a otro padre, copiamos sus permisos
+            if vals['parent_id']:
+                p_access, p_groups = self._get_parent_permissions(vals['parent_id'])
+                # Reemplazamos los permisos actuales con los del nuevo padre (comando 5=borrar todo, luego agregar)
+                if p_access:
+                    vals['access_ids'] = [(5, 0, 0)] + p_access
+                if p_groups:
+                    vals['allowed_group_ids'] = p_groups
+
+        # Ejecutamos la escritura normal
+        res = super(DocumentFolder, self).write(vals)
+
+        # CASO 2: Cascada hacia abajo (Si cambié mis permisos, actualizo a mis hijos)
+        if 'access_ids' in vals or 'allowed_group_ids' in vals:
+            for folder in self:
+                if folder.child_ids:
+                    # Preparamos mis nuevos permisos para dárselos a mis hijos
+                    my_access, my_groups = self._get_parent_permissions(folder.id)
+                    
+                    # Actualizamos hijos (sin disparar recursividad infinita gracias a que super().write ya pasó)
+                    # Usamos update en lugar de write para evitar bucles complejos si fuera bidireccional
+                    for child in folder.child_ids:
+                        child_vals = {}
+                        if my_access:
+                            child_vals['access_ids'] = [(5, 0, 0)] + my_access
+                        if my_groups:
+                            child_vals['allowed_group_ids'] = my_groups
+                        
+                        if child_vals:
+                            child.write(child_vals)
+        return res
+    @api.constrains('folder_id')
+    def _check_folder_write_permission(self):
+        """Bloquea guardar si el usuario solo tiene permiso de lectura en la carpeta"""
+        for doc in self:
+            # 1. Si es Admin (Sistema), pase VIP
+            if self.env.is_superuser() or self.env.user.has_group('base.group_system'):
+                continue
+
+            if not doc.folder_id:
+                continue
+
+            user = self.env.user
+            folder = doc.folder_id
+            
+            # --- LÓGICA DE DETECCIÓN DE PERMISO ---
+            # Buscamos si el usuario tiene una regla específica en esta carpeta
+            # (Ya sea directa o heredada que se haya copiado con la 'Fotocopiadora')
+            
+            user_perm = folder.access_ids.filtered(lambda r: r.user_id == user)
+            
+            # Si encontramos una regla para este usuario...
+            if user_perm:
+                # ... y esa regla dice 'read' (Solo Lectura)
+                if user_perm.access_level == 'read':
+                    raise ValidationError(f"⛔ ACCESO DENEGADO\n\nSolo tienes permiso de LECTURA en la carpeta '{folder.name}'.\nNo puedes crear ni modificar documentos aquí.")
+
 # 3. DOCUMENT CONTROL (VERSIÓN AYER)
 # ==========================================
 class DocumentControl(models.Model):
@@ -111,7 +241,7 @@ class DocumentControl(models.Model):
         ('draft', 'Borrador'), ('upload', 'Carga'), ('review', 'Revisión'),
         ('validate', 'Aprobación'), ('approved', 'Publicado'),
         ('rejected', 'Rechazado'), ('obsolete', 'Obsoleto')
-    ], default='draft', tracking=True)
+    ],string='Estado', default='draft', tracking=True)
 
     editable_file = fields.Binary(attachment=True)
     editable_filename = fields.Char()
@@ -132,6 +262,75 @@ class DocumentControl(models.Model):
     is_owner = fields.Boolean(compute='_compute_is_owner')
 
     _sql_constraints = [('code_version_uniq', 'unique(code, version)', '¡Versión duplicada!')]
+
+    # =========================================================
+    def _check_write_permission(self, folder):
+        """Verifica si el usuario actual puede escribir en la carpeta dada"""
+        # 1. Si es Admin Supremo, pase libre
+        if self.env.is_superuser() or self.env.user.has_group('base.group_system'):
+            return True
+
+        # 2. Buscamos permisos
+        my_perm = folder.access_ids.filtered(lambda p: p.user_id == self.env.user)
+
+        # 3. SI EXISTE UNA REGLA PARA MÍ Y ES 'READ' (Solo Lectura)...
+        if my_perm and my_perm.access_level == 'read':
+            raise ValidationError(f"⛔ ACCESO DENEGADO\n\nLa carpeta '{folder.name}' es de SOLO LECTURA para ti.\nNo puedes crear ni modificar documentos aquí.")
+
+        return True
+
+    def _check_upload_requirements(self):
+        """
+        Si el documento está (o pasa a) estado 'Carga', 
+        verificamos que tenga archivos y revisor.
+        """
+        for doc in self:
+            # Solo validamos si estamos en el estado 'upload' (Carga)
+            if doc.state == 'review':
+                
+                # A. Validar Archivos (al menos uno)
+                if not doc.pdf_file and not doc.editable_file:
+                    raise ValidationError("⚠️ FALTA ARCHIVO\n\nPara estar en etapa de Carga, debes subir al menos un documento (PDF o Editable).")
+                
+                # B. Validar Revisor
+                if not doc.reviewer_ids:
+                    raise ValidationError("⚠️ FALTA REVISOR\n\nDebes asignar al menos un Revisor para continuar.")
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        """Al crear (Soporta creación por lotes de Odoo 19)"""
+        for vals in vals_list:
+            if vals.get('folder_id'):
+                folder = self.env['document.folder'].browse(vals['folder_id'])
+                self._check_write_permission(folder)
+        
+        records = super(DocumentControl, self).create(vals_list)
+        
+        # 3. NUEVO: Validamos si cumplen los requisitos (por si nacen directo en 'upload')
+        records._check_upload_requirements()
+        
+        return records
+    def write(self, vals):
+        """Al editar"""
+        # Si cambian de carpeta
+        if vals.get('folder_id'):
+            new_folder = self.env['document.folder'].browse(vals['folder_id'])
+            self._check_write_permission(new_folder)
+        
+        # Si no cambian de carpeta, verificamos la actual
+        for doc in self:
+            if not vals.get('folder_id') and doc.folder_id:
+                self._check_write_permission(doc.folder_id)
+                
+# 3. Guardamos los cambios
+        result = super(DocumentControl, self).write(vals)
+
+        # 4. NUEVO: Validamos requisitos DESPUÉS de guardar
+        # (Así Odoo ya sabe el nuevo estado y los nuevos datos)
+        self._check_upload_requirements()
+        
+        return result
+
 
     @api.depends('code')
     def _compute_history_ids(self):
@@ -164,7 +363,18 @@ class DocumentControl(models.Model):
                     r.preview_html = f'<div class="text-center p-3"><a href="{url}" class="btn btn-primary">Descargar</a></div>'
             elif r.editable_file:
                 r.preview_html = '<div class="alert alert-info">Archivo fuente disponible para descarga.</div>'
-
+    def action_open_preview_popup(self):
+        self.ensure_one()
+        return {
+            'name': 'Vista Previa: ' + self.name,
+            'type': 'ir.actions.act_window',
+            'res_model': 'document.control',
+            'res_id': self.id,
+            'view_mode': 'form',
+            'view_id': self.env.ref('custom_document_control.view_document_preview_popup').id,
+            'target': 'new',
+            'flags': {'mode': 'readonly'},
+        }
     def action_generate_ai_help(self):
         self.ensure_one()
         key = self.env['ir.config_parameter'].sudo().get_param('openai_api_key')

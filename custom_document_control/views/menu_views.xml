@@ -1,18 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <menuitem id="menu_document_control_root" name="Gestión ISO" web_icon="custom_document_control,static/description/icon.png"/>
-    <menuitem id="menu_document_main" name="Gestión" parent="menu_document_control_root" sequence="1"/>
-    <menuitem id="menu_my_pending_tasks" name="Mis Pendientes" parent="menu_document_main" action="action_my_pending_tasks" sequence="1"/>
-    <menuitem id="menu_doc_control_list" name="Todos los Documentos" parent="menu_document_main" action="action_document_control" sequence="2"/>
+    <menuitem id="menu_document_control_root" name="Gestión Archivos" web_icon="custom_document_control,static/description/icon.png"/>
+    <menuitem id="menu_my_pending_tasks" name="Mis Pendientes" parent="menu_document_control_root" action="action_my_pending_tasks" sequence="1"/>
 
     <menuitem id="menu_all_documents"
-              name="Documentos"
+              name="Subidas"
               parent="menu_document_control_root"
               action="action_document_control"
               sequence="10"/>
 
     <menuitem id="menu_repository"
-              name="Biblioteca"
+              name="Archivos"
               parent="menu_document_control_root"
               action="action_document_repository"
               sequence="20"/>

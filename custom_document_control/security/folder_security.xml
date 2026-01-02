@@ -1,12 +1,96 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <record id="rule_document_folder_access" model="ir.rule">
-        <field name="name">Acceso a Carpetas (Por Grupos)</field>
-        <field name="model_id" ref="model_document_folder"/>
-        <field name="domain_force">['|', ('allowed_group_ids', '=', False), ('access_user_ids', 'in', [user.id])]</field>
-        <field name="perm_read" eval="True"/>
-        <field name="perm_write" eval="False"/>
-        <field name="perm_create" eval="False"/>
-        <field name="perm_unlink" eval="False"/>
-    </record>
+    <data noupdate="1">
+
+        <record id="rule_document_folder_read" model="ir.rule">
+            <field name="name">Carpeta: Permiso de Lectura</field>
+            <field name="model_id" ref="model_document_folder"/>
+            <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+            <field name="perm_read" eval="1"/>
+            <field name="perm_write" eval="0"/>
+            <field name="perm_create" eval="0"/>
+            <field name="perm_unlink" eval="0"/>
+            <field name="domain_force">
+                ['&amp;',
+                    '|', '|', ('access_ids', '=', False),                 
+                              ('access_ids.user_id', '=', user.id),       
+                              ('access_user_ids', 'in', [user.id]),       '|', '|', '|', ('parent_id', '=', False),
+                                   ('parent_id.access_ids', '=', False),
+                                   ('parent_id.access_ids.user_id', '=', user.id),
+                                   ('parent_id.access_user_ids', 'in', [user.id]) ]
+            </field>
+        </record>
+
+        <record id="rule_document_folder_write" model="ir.rule">
+            <field name="name">Carpeta: Permiso de Escritura</field>
+            <field name="model_id" ref="model_document_folder"/>
+            <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+            <field name="perm_read" eval="0"/>
+            <field name="perm_write" eval="1"/>
+            <field name="perm_create" eval="1"/>
+            <field name="perm_unlink" eval="1"/>
+            <field name="domain_force">
+                ['|', 
+                    ('access_ids', '=', False), 
+                    '&amp;',
+                        '|', ('access_ids.user_id', '=', user.id),
+                             ('access_user_ids', 'in', [user.id]), ('access_ids.access_level', '=', 'write')
+                ]
+            </field>
+        </record>
+
+
+        <record id="rule_document_control_read" model="ir.rule">
+            <field name="name">Documentos: Permiso de Lectura</field>
+            <field name="model_id" ref="model_document_control"/>
+            <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+            <field name="perm_read" eval="1"/>
+            <field name="perm_write" eval="0"/>
+            <field name="perm_create" eval="0"/>
+            <field name="perm_unlink" eval="0"/>
+            <field name="domain_force">
+                ['&amp;',
+                    '|', '|', ('folder_id.access_ids', '=', False),
+                              ('folder_id.access_ids.user_id', '=', user.id),
+                              ('folder_id.access_user_ids', 'in', [user.id]), '|', '|', '|', ('folder_id.parent_id', '=', False),
+                                   ('folder_id.parent_id.access_ids', '=', False),
+                                   ('folder_id.parent_id.access_ids.user_id', '=', user.id),
+                                   ('folder_id.parent_id.access_user_ids', 'in', [user.id]) ]
+            </field>
+        </record>
+
+        <record id="rule_document_control_write" model="ir.rule">
+            <field name="name">Documentos: Permiso de Escritura</field>
+            <field name="model_id" ref="model_document_control"/>
+            <field name="groups" eval="[(4, ref('base.group_user'))]"/>
+            <field name="perm_read" eval="0"/>
+            <field name="perm_write" eval="1"/>
+            <field name="perm_create" eval="1"/>
+            <field name="perm_unlink" eval="1"/>
+            <field name="domain_force">
+                ['|', 
+                    ('folder_id.access_ids', '=', False),
+                    '&amp;',
+                        '|', ('folder_id.access_ids.user_id', '=', user.id),
+                             ('folder_id.access_user_ids', 'in', [user.id]), ('folder_id.access_ids.access_level', '=', 'write')
+                ]
+            </field>
+        </record>
+
+
+        <record id="rule_document_folder_admin_vip" model="ir.rule">
+            <field name="name">Admin: Control Total Carpetas</field>
+            <field name="model_id" ref="model_document_folder"/>
+            <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+        </record>
+        
+        <record id="rule_document_control_admin_vip" model="ir.rule">
+            <field name="name">Admin: Control Total Documentos</field>
+            <field name="model_id" ref="model_document_control"/>
+            <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+            <field name="domain_force">[(1, '=', 1)]</field>
+        </record>
+
+    </data>
 </odoo>
